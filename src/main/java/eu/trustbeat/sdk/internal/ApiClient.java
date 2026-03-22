@@ -1,0 +1,162 @@
+package eu.trustbeat.sdk.internal;
+
+import eu.trustbeat.sdk.*;
+
+import java.io.IOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.Base64;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+/**
+ * Low-level HTTP client wrapping java.net.http.HttpClient.
+ * Handles auth, JSON serialisation/deserialisation, and error mapping.
+ */
+public final class ApiClient {
+
+    private final String     apiKey;
+    private final String     baseUrl;
+    private final HttpClient http;
+
+    public ApiClient(String apiKey, String baseUrl, Duration timeout) {
+        this.apiKey  = apiKey;
+        this.baseUrl = baseUrl.replaceAll("/$", "");
+        this.http    = HttpClient.newBuilder()
+                                 .connectTimeout(timeout)
+                                 .build();
+    }
+
+    // ── Low-level HTTP ─────────────────────────────────────────────────────────
+
+    public Map<String, Object> post(String path, String jsonBody) {
+        return send("POST", path, jsonBody);
+    }
+
+    public Map<String, Object> get(String path) {
+        return send("GET", path, null);
+    }
+
+    private Map<String, Object> send(String method, String path, String body) {
+        HttpRequest.Builder req = HttpRequest.newBuilder()
+            .uri(URI.create(baseUrl + path))
+            .header("Authorization", "Bearer " + apiKey)
+            .header("Accept", "application/json")
+            .timeout(Duration.ofSeconds(30));
+
+        if (body != null) {
+            req.header("Content-Type", "application/json");
+            req.method(method, HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8));
+        } else {
+            req.method(method, HttpRequest.BodyPublishers.noBody());
+        }
+
+        HttpResponse<String> resp;
+        try {
+            resp = http.send(req.build(), HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        } catch (IOException | InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new TrustBeatException("Request failed: " + e.getMessage());
+        }
+
+        String responseBody = resp.body();
+        Map<String, Object> data;
+        try {
+            data = Json.parseObject(responseBody);
+        } catch (Exception e) {
+            data = Map.of("error", Map.of("message", responseBody));
+        }
+
+        int status = resp.statusCode();
+        if (status < 200 || status >= 300) {
+            String msg = extractErrorMessage(data, status);
+            switch (status) {
+                case 401: throw new AuthException(msg);
+                case 402: throw new QuotaException(msg);
+                case 404: throw new NotFoundException(msg);
+                case 429: throw new RateLimitException(msg);
+                default:  throw new TrustBeatException(msg, status);
+            }
+        }
+
+        return data;
+    }
+
+    @SuppressWarnings("unchecked")
+    private String extractErrorMessage(Map<String, Object> data, int status) {
+        Object err = data.get("error");
+        if (err instanceof Map) {
+            Object msg = ((Map<String, Object>) err).get("message");
+            if (msg != null) return msg.toString();
+        }
+        return "HTTP " + status;
+    }
+
+    // ── Response parsers ───────────────────────────────────────────────────────
+
+    public static AnchorJob parseAnchorJob(Map<String, Object> d) {
+        return new AnchorJob(
+            Json.str(d, "id"),
+            Json.str(d, "hash"),
+            Json.str(d, "hash_algorithm"),
+            Json.str(d, "status"),
+            Json.str(d, "submitted_at"),
+            Json.bool(d, "overage", false)
+        );
+    }
+
+    public static AnchorProof parseProof(Map<String, Object> d) {
+        List<ProofStep> path = Json.array(d, "proof_path").stream()
+            .map(s -> new ProofStep(Json.str(s, "sibling"), Json.str(s, "side")))
+            .collect(Collectors.toList());
+
+        String tokenB64 = Json.str(d, "token");
+        byte[] token = tokenB64 != null
+            ? Base64.getDecoder().decode(tokenB64)
+            : new byte[0];
+
+        return new AnchorProof(
+            Json.str(d, "id"),
+            Json.str(d, "hash"),
+            Json.str(d, "hash_algorithm"),
+            Json.str(d, "batch_id"),
+            Json.intVal(d, "leaf_index"),
+            Json.str(d, "merkle_root"),
+            path,
+            token,
+            Json.str(d, "token_format"),
+            Json.str(d, "tsa_serial"),
+            Json.str(d, "provider"),
+            Json.str(d, "anchored_at"),
+            Json.str(d, "client_ref"),
+            Json.str(d, "description")
+        );
+    }
+
+    public static TimestampResult parseTimestamp(Map<String, Object> d) {
+        String tokenB64 = Json.str(d, "token");
+        byte[] token = tokenB64 != null
+            ? Base64.getDecoder().decode(tokenB64)
+            : new byte[0];
+        return new TimestampResult(
+            Json.str(d, "id"),
+            Json.str(d, "hash"),
+            Json.str(d, "hash_algorithm"),
+            token,
+            Json.str(d, "token_format"),
+            Json.str(d, "tsa_serial"),
+            Json.str(d, "provider"),
+            Json.str(d, "timestamped_at")
+        );
+    }
+
+    /** Returns true if the response looks like a completed proof (has merkle_root). */
+    public static boolean looksLikeProof(Map<String, Object> data) {
+        return data.containsKey("merkle_root") && data.get("merkle_root") != null;
+    }
+}
