@@ -4,8 +4,12 @@ import eu.trustbeat.sdk.internal.ApiClient;
 import eu.trustbeat.sdk.internal.Json;
 import eu.trustbeat.sdk.internal.MerkleVerifier;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
@@ -208,7 +212,69 @@ public final class TrustBeat {
         return ApiClient.parseTimestamp(data);
     }
 
+    // ── File helpers ──────────────────────────────────────────────────────────
+
+    /**
+     * Hash a local file with SHA-256 and submit it for anchoring.
+     *
+     * <p>The file is read in 64 KB chunks and hashed locally — it is
+     * <em>never uploaded</em>. Only the 64-character hex digest is sent to
+     * the TrustBeat API. {@code description} is set to the filename.</p>
+     *
+     * @param path path to the file to anchor
+     */
+    public AnchorJob anchorFile(Path path) {
+        return anchorFile(path, new AnchorOptions());
+    }
+
+    public AnchorJob anchorFile(Path path, AnchorOptions options) {
+        String hash = hashFile(path);
+        if (options.getDescription() == null) {
+            options = new AnchorOptions()
+                .clientRef(options.getClientRef())
+                .description(path.getFileName().toString());
+        }
+        return anchor(hash, options);
+    }
+
+    /**
+     * Hash a file, submit for anchoring, and block until the proof is ready.
+     * Polls with defaults: 660s timeout, 15s interval.
+     */
+    public AnchorProof anchorFileWait(Path path) {
+        return anchorFileWait(path, new AnchorOptions(), 660, 15);
+    }
+
+    public AnchorProof anchorFileWait(Path path, AnchorOptions options,
+                                      int timeoutSecs, int pollSecs) {
+        AnchorJob job = anchorFile(path, options);
+        return anchorWait(job.getId(), timeoutSecs, pollSecs);
+    }
+
     // ── Static hashing utilities ───────────────────────────────────────────────
+
+    /**
+     * SHA-256 hash of a local file, returned as a lowercase hex string.
+     * Reads the file in 64 KB chunks — suitable for large files.
+     */
+    public static String hashFile(Path path) {
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            byte[] buf = new byte[65536];
+            try (InputStream in = Files.newInputStream(path)) {
+                int n;
+                while ((n = in.read(buf)) != -1) md.update(buf, 0, n);
+            }
+            byte[] digest = md.digest();
+            StringBuilder sb = new StringBuilder(64);
+            for (byte b : digest) sb.append(String.format("%02x", b));
+            return sb.toString();
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 not available", e);
+        } catch (IOException e) {
+            throw new TrustBeatException("Failed to read file: " + path + " — " + e.getMessage());
+        }
+    }
 
     /**
      * SHA-256 hash of a byte array, returned as a lowercase hex string.

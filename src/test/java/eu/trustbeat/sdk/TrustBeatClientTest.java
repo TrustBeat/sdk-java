@@ -7,6 +7,8 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.util.Arrays;
 import java.util.Base64;
@@ -328,5 +330,78 @@ class TrustBeatClientTest {
     void hashStringMatchesHashBytes() {
         assertEquals(TrustBeat.hashBytes("world".getBytes()),
                      TrustBeat.hashString("world"));
+    }
+
+    // ── anchorFile() ──────────────────────────────────────────────────────────
+
+    @Test
+    void hashFileReturns64CharLowercaseHex() throws Exception {
+        Path tmp = Files.createTempFile("tb-hash", ".bin");
+        try {
+            Files.write(tmp, "deterministic content".getBytes(StandardCharsets.UTF_8));
+            String h = TrustBeat.hashFile(tmp);
+            assertEquals(64, h.length());
+            assertTrue(h.matches("[0-9a-f]+"));
+        } finally {
+            Files.deleteIfExists(tmp);
+        }
+    }
+
+    @Test
+    void hashFileMatchesManualSha256() throws Exception {
+        byte[] content = "deterministic content 42".getBytes(StandardCharsets.UTF_8);
+        String expected = hex(sha256(content));
+
+        Path tmp = Files.createTempFile("tb-hash-match", ".bin");
+        try {
+            Files.write(tmp, content);
+            assertEquals(expected, TrustBeat.hashFile(tmp));
+        } finally {
+            Files.deleteIfExists(tmp);
+        }
+    }
+
+    @Test
+    void anchorFileDescriptionDefaultsToFilename() throws Exception {
+        AtomicReference<String> capturedDesc = new AtomicReference<>();
+        server.createContext("/v1/anchors", ex -> {
+            String body = new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+            int start = body.indexOf("\"description\":\"") + 15;
+            int end   = body.indexOf("\"", start);
+            capturedDesc.set(body.substring(start, end));
+            respond(ex, 202, anchorAcceptedJson("track-fd"));
+            server.removeContext("/v1/anchors");
+        });
+
+        Path tmp = Files.createTempFile("tb-file-desc", ".txt");
+        try {
+            Files.write(tmp, "data".getBytes());
+            client().anchorFile(tmp);
+            assertEquals(tmp.getFileName().toString(), capturedDesc.get());
+        } finally {
+            Files.deleteIfExists(tmp);
+        }
+    }
+
+    @Test
+    void anchorFileCustomDescriptionOverridesFilename() throws Exception {
+        AtomicReference<String> capturedDesc = new AtomicReference<>();
+        server.createContext("/v1/anchors", ex -> {
+            String body = new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+            int start = body.indexOf("\"description\":\"") + 15;
+            int end   = body.indexOf("\"", start);
+            capturedDesc.set(body.substring(start, end));
+            respond(ex, 202, anchorAcceptedJson("track-fd2"));
+            server.removeContext("/v1/anchors");
+        });
+
+        Path tmp = Files.createTempFile("tb-file-desc2", ".txt");
+        try {
+            Files.write(tmp, "data".getBytes());
+            client().anchorFile(tmp, new TrustBeat.AnchorOptions().description("custom-desc"));
+            assertEquals("custom-desc", capturedDesc.get());
+        } finally {
+            Files.deleteIfExists(tmp);
+        }
     }
 }
