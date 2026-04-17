@@ -74,13 +74,14 @@ public final class ApiClient {
 
         int status = resp.statusCode();
         if (status < 200 || status >= 300) {
-            String msg = extractErrorMessage(data, status);
+            String msg  = extractErrorMessage(data, status);
+            String code = extractErrorCode(data);
             switch (status) {
                 case 401: throw new AuthException(msg);
                 case 402: throw new QuotaException(msg);
-                case 404: throw new NotFoundException(msg);
+                case 404: throw new NotFoundException(msg, code != null ? code : "NOT_FOUND");
                 case 429: throw new RateLimitException(msg);
-                default:  throw new TrustBeatException(msg, status);
+                default:  throw new TrustBeatException(msg, status, code);
             }
         }
 
@@ -95,6 +96,16 @@ public final class ApiClient {
             if (msg != null) return msg.toString();
         }
         return "HTTP " + status;
+    }
+
+    @SuppressWarnings("unchecked")
+    private String extractErrorCode(Map<String, Object> data) {
+        Object err = data.get("error");
+        if (err instanceof Map) {
+            Object code = ((Map<String, Object>) err).get("code");
+            if (code != null) return code.toString();
+        }
+        return null;
     }
 
     // ── Response parsers ───────────────────────────────────────────────────────
@@ -158,5 +169,52 @@ public final class ApiClient {
     /** Returns true if the response looks like a completed proof (has merkle_root). */
     public static boolean looksLikeProof(Map<String, Object> data) {
         return data.containsKey("merkle_root") && data.get("merkle_root") != null;
+    }
+
+    @SuppressWarnings("unchecked")
+    public static AiDecisionJob parseAiDecisionJob(Map<String, Object> d) {
+        return new AiDecisionJob(
+            Json.str(d, "id"),
+            Json.str(d, "input_hash"),
+            Json.str(d, "output_hash"),
+            Json.str(d, "combined_hash"),
+            Json.str(d, "status"),
+            Json.str(d, "submitted_at"),
+            Json.bool(d, "overage", false)
+        );
+    }
+
+    @SuppressWarnings("unchecked")
+    public static AiDecisionProof parseAiDecisionProof(Map<String, Object> d) {
+        Map<String, Object> m = (Map<String, Object>) d.get("metadata");
+        Map<String, Object> te = (Map<String, Object>) m.get("time_envelope");
+        AiDecisionMetadata meta = new AiDecisionMetadata.Builder()
+            .modelId(Json.str(m, "model_id"))
+            .modelVersion(Json.str(m, "model_version"))
+            .systemName(Json.str(m, "system_name"))
+            .riskCategory(Json.str(m, "risk_category"))
+            .decisionType(Json.str(m, "decision_type"))
+            .humanOversight(Json.bool(m, "human_oversight", false))
+            .timeEnvelope(new AiTimeEnvelope(Json.str(te, "started_at"), Json.str(te, "completed_at")))
+            .operatorId(Json.str(m, "operator_id"))
+            .deploymentEnv(Json.str(m, "deployment_env"))
+            .build();
+
+        AnchorProof proof = null;
+        Object proofObj = d.get("proof");
+        if (proofObj instanceof Map) {
+            proof = parseProof((Map<String, Object>) proofObj);
+        }
+
+        return new AiDecisionProof(
+            Json.str(d, "id"),
+            Json.str(d, "input_hash"),
+            Json.str(d, "output_hash"),
+            Json.str(d, "combined_hash"),
+            meta,
+            Json.str(d, "verification_status"),
+            Json.str(d, "anchored_at"),
+            proof
+        );
     }
 }

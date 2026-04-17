@@ -297,4 +297,94 @@ public final class TrustBeat {
     public static String hashString(String text) {
         return hashBytes(text.getBytes(StandardCharsets.UTF_8));
     }
+
+    // ── AI Act Audit Anchoring ─────────────────────────────────────────────────
+
+    /**
+     * Submit an AI decision for EU AI Act Article 12 anchoring.
+     *
+     * <p>Privacy-safe: only hashes are sent — raw model inputs and outputs are
+     * never uploaded.  Returns immediately with a tracking ID.
+     * Use {@link #anchorAiDecisionWait(String)} to block until the proof is ready.
+     *
+     * @param inputHash  SHA-256 hex digest of the model input (64 lowercase hex chars)
+     * @param outputHash SHA-256 hex digest of the model output/decision (64 hex chars)
+     * @param metadata   decision metadata (model ID, risk category, oversight flag, etc.)
+     */
+    public AiDecisionJob anchorAiDecision(String inputHash, String outputHash,
+                                          AiDecisionMetadata metadata) {
+        String teJson = Json.buildObject(
+            "started_at",   metadata.getTimeEnvelope().getStartedAt(),
+            "completed_at", metadata.getTimeEnvelope().getCompletedAt()
+        );
+        String metaJson = Json.buildObject(
+            "model_id",        metadata.getModelId(),
+            "model_version",   metadata.getModelVersion(),
+            "system_name",     metadata.getSystemName(),
+            "risk_category",   metadata.getRiskCategory(),
+            "decision_type",   metadata.getDecisionType(),
+            "human_oversight", String.valueOf(metadata.isHumanOversight()),
+            "operator_id",     metadata.getOperatorId(),
+            "deployment_env",  metadata.getDeploymentEnv()
+        );
+        // Inject time_envelope object and fix human_oversight boolean
+        metaJson = metaJson
+            .replace("\"time_envelope\":\"null\"", "")  // remove placeholder
+            .replace("\"human_oversight\":\"" + metadata.isHumanOversight() + "\"",
+                     "\"human_oversight\":" + metadata.isHumanOversight());
+        // Append time_envelope before closing brace
+        metaJson = metaJson.substring(0, metaJson.lastIndexOf('}'))
+            + (metaJson.lastIndexOf('{') == metaJson.lastIndexOf('}') - 1 ? "" : ",")
+            + "\"time_envelope\":" + teJson + "}";
+
+        String body = "{\"input_hash\":\"" + inputHash + "\","
+            + "\"output_hash\":\"" + outputHash + "\","
+            + "\"metadata\":" + metaJson + "}";
+
+        Map<String, Object> data = http.post("/ai/decisions/anchor", body);
+        return ApiClient.parseAiDecisionJob(data);
+    }
+
+    /**
+     * Fetch the verification result for a previously submitted AI decision.
+     * Returns {@code null} if the decision is still pending (not yet anchored).
+     *
+     * @param trackingId the ID returned by {@link #anchorAiDecision}
+     */
+    public AiDecisionProof getAiDecisionProof(String trackingId) {
+        try {
+            String path = "/ai/decisions/verify/" + URLEncoder.encode(trackingId, StandardCharsets.UTF_8);
+            Map<String, Object> data = http.get(path);
+            return ApiClient.parseAiDecisionProof(data);
+        } catch (NotFoundException e) {
+            if ("NOT_ANCHORED".equals(e.getCode())) return null;
+            throw e;
+        }
+    }
+
+    /**
+     * Poll until the AI decision proof is ready, then return it.
+     * Polls with defaults: 660s timeout, 15s interval.
+     */
+    public AiDecisionProof anchorAiDecisionWait(String trackingId) {
+        return anchorAiDecisionWait(trackingId, 660, 15);
+    }
+
+    public AiDecisionProof anchorAiDecisionWait(String trackingId, int timeoutSecs, int pollSecs) {
+        long deadline = System.currentTimeMillis() + (long) timeoutSecs * 1000;
+        while (true) {
+            AiDecisionProof proof = getAiDecisionProof(trackingId);
+            if (proof != null) return proof;
+            if (System.currentTimeMillis() >= deadline) {
+                throw new TrustBeatException(
+                    "anchorAiDecisionWait timed out after " + timeoutSecs + "s for " + trackingId);
+            }
+            try {
+                Thread.sleep((long) pollSecs * 1000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new TrustBeatException("anchorAiDecisionWait interrupted");
+            }
+        }
+    }
 }
