@@ -318,14 +318,18 @@ public final class TrustBeat {
             "completed_at", metadata.getTimeEnvelope().getCompletedAt()
         );
         String metaJson = Json.buildObject(
-            "model_id",        metadata.getModelId(),
-            "model_version",   metadata.getModelVersion(),
-            "system_name",     metadata.getSystemName(),
-            "risk_category",   metadata.getRiskCategory(),
-            "decision_type",   metadata.getDecisionType(),
-            "human_oversight", String.valueOf(metadata.isHumanOversight()),
-            "operator_id",     metadata.getOperatorId(),
-            "deployment_env",  metadata.getDeploymentEnv()
+            "model_id",             metadata.getModelId(),
+            "model_version",        metadata.getModelVersion(),
+            "system_name",          metadata.getSystemName(),
+            "risk_category",        metadata.getRiskCategory(),
+            "decision_type",        metadata.getDecisionType(),
+            "human_oversight",      String.valueOf(metadata.isHumanOversight()),
+            "operator_id",          metadata.getOperatorId(),
+            "deployment_env",       metadata.getDeploymentEnv(),
+            "external_ref",         metadata.getExternalRef(),
+            "decision_outcome",     metadata.getDecisionOutcome(),
+            "model_artifact_hash",  metadata.getModelArtifactHash(),
+            "data_subject_category", metadata.getDataSubjectCategory()
         );
         // Inject time_envelope object and fix human_oversight boolean
         metaJson = metaJson

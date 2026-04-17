@@ -198,6 +198,10 @@ public final class ApiClient {
             .timeEnvelope(new AiTimeEnvelope(Json.str(te, "started_at"), Json.str(te, "completed_at")))
             .operatorId(Json.str(m, "operator_id"))
             .deploymentEnv(Json.str(m, "deployment_env"))
+            .externalRef(Json.str(m, "external_ref"))
+            .decisionOutcome(Json.str(m, "decision_outcome"))
+            .modelArtifactHash(Json.str(m, "model_artifact_hash"))
+            .dataSubjectCategory(Json.str(m, "data_subject_category"))
             .build();
 
         AnchorProof proof = null;
