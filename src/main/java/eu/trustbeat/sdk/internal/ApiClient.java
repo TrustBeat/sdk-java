@@ -221,4 +221,72 @@ public final class ApiClient {
             proof
         );
     }
+
+    @SuppressWarnings("unchecked")
+    private static eu.trustbeat.sdk.SignatureDetail parseSignatureDetail(Map<String, Object> d) {
+        return new eu.trustbeat.sdk.SignatureDetail(
+            Json.intVal(d, "index"),
+            Json.str(d, "signer_name"),
+            Json.str(d, "signer_email"),
+            Json.str(d, "signing_time"),
+            Json.str(d, "cert_serial"),
+            Json.str(d, "cert_fingerprint"),
+            Json.str(d, "cert_issuer"),
+            Json.bool(d, "qualified", false),
+            Json.bool(d, "on_eutl", false),
+            Json.bool(d, "qscd", false),
+            Json.str(d, "revocation_status"),
+            Json.str(d, "revocation_time"),
+            Json.str(d, "ocsp_response"),
+            Json.str(d, "signature_level"),
+            Json.bool(d, "timestamp_present", false),
+            Json.str(d, "timestamp_serial"),
+            Json.str(d, "verdict")
+        );
+    }
+
+    @SuppressWarnings("unchecked")
+    public static eu.trustbeat.sdk.VerificationReport parseVerificationReport(Map<String, Object> d) {
+        List<Map<String, Object>> sigs = (List<Map<String, Object>>) d.getOrDefault("signatures", List.of());
+        List<eu.trustbeat.sdk.SignatureDetail> details = sigs.stream()
+            .map(ApiClient::parseSignatureDetail)
+            .collect(Collectors.toList());
+        return new eu.trustbeat.sdk.VerificationReport(
+            Json.str(d, "verdict"),
+            details,
+            Json.str(d, "document_hash"),
+            Json.str(d, "checked_at"),
+            Json.str(d, "eutl_version"),
+            Json.str(d, "tracking_id")
+        );
+    }
+
+    public static eu.trustbeat.sdk.VerificationJob parseVerificationJob(Map<String, Object> d) {
+        return new eu.trustbeat.sdk.VerificationJob(
+            Json.str(d, "tracking_id"),
+            Json.str(d, "document_hash"),
+            Json.str(d, "status"),
+            Json.str(d, "submitted_at")
+        );
+    }
+
+    @SuppressWarnings("unchecked")
+    public static eu.trustbeat.sdk.CertificateValidationResult parseCertValidationResult(Map<String, Object> d) {
+        List<String> keyUsage = (List<String>) d.getOrDefault("key_usage", List.of());
+        return new eu.trustbeat.sdk.CertificateValidationResult(
+            Json.str(d, "subject"),
+            Json.str(d, "issuer"),
+            Json.str(d, "serial"),
+            Json.str(d, "not_before"),
+            Json.str(d, "not_after"),
+            Json.bool(d, "qualified", false),
+            Json.bool(d, "on_eutl", false),
+            Json.bool(d, "qscd", false),
+            Json.str(d, "revocation_status"),
+            Json.str(d, "revocation_time"),
+            keyUsage,
+            Json.bool(d, "valid", false),
+            Json.str(d, "validated_at")
+        );
+    }
 }

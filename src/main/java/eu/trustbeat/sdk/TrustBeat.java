@@ -14,6 +14,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 
@@ -390,5 +391,66 @@ public final class TrustBeat {
                 throw new TrustBeatException("anchorAiDecisionWait interrupted");
             }
         }
+    }
+
+    // ── Signature & certificate verification ─────────────────────────────────
+
+    /**
+     * Verify eIDAS electronic signatures on a document.
+     * <p>
+     * Validates PAdES (PDF), CAdES (CMS), or XAdES (XML) signatures against the EU Trusted List.
+     * Returns a full report with per-signature details and a top-level verdict.
+     *
+     * @param document document bytes (PDF, CMS/p7s, or XML)
+     * @param format   "pades", "cades", or "xades"
+     */
+    public VerificationReport verifySignature(byte[] document, String format) {
+        String b64 = Base64.getEncoder().encodeToString(document);
+        String body = "{\"document_base64\":\"" + b64 + "\",\"format\":\"" + format + "\"}";
+        Map<String, Object> data = http.post("/verify/signature", body);
+        return ApiClient.parseVerificationReport(data);
+    }
+
+    /**
+     * Verify eIDAS signatures and anchor the verification event.
+     * <p>
+     * Returns immediately (202 Accepted) with a tracking ID. Use
+     * {@link #getVerification(String)} to retrieve the report.
+     *
+     * @param document document bytes
+     * @param format   "pades", "cades", or "xades"
+     */
+    public VerificationJob verifyAndAnchor(byte[] document, String format) {
+        String b64 = Base64.getEncoder().encodeToString(document);
+        String body = "{\"document_base64\":\"" + b64 + "\",\"format\":\"" + format + "\",\"anchor\":true}";
+        Map<String, Object> data = http.post("/verify/signature/anchored", body);
+        return ApiClient.parseVerificationJob(data);
+    }
+
+    /**
+     * Retrieve a saved verification report by tracking ID.
+     *
+     * @param trackingId ID returned by {@link #verifySignature} or {@link #verifyAndAnchor}
+     * @throws NotFoundException if the tracking ID is unknown
+     */
+    public VerificationReport getVerification(String trackingId) {
+        String path = "/verify/" + URLEncoder.encode(trackingId, StandardCharsets.UTF_8);
+        Map<String, Object> data = http.get(path);
+        return ApiClient.parseVerificationReport(data);
+    }
+
+    /**
+     * Validate a standalone X.509 certificate (DER or PEM) against the EU Trusted List.
+     * <p>
+     * Checks certificate chain, revocation status (OCSP/CRL), qualified certificate
+     * status, and QSCD flag.
+     *
+     * @param certificate DER- or PEM-encoded X.509 certificate bytes
+     */
+    public CertificateValidationResult validateCertificate(byte[] certificate) {
+        String b64 = Base64.getEncoder().encodeToString(certificate);
+        String body = "{\"certificate_base64\":\"" + b64 + "\"}";
+        Map<String, Object> data = http.post("/validate/certificate", body);
+        return ApiClient.parseCertValidationResult(data);
     }
 }
