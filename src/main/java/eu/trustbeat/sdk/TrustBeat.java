@@ -195,24 +195,6 @@ public final class TrustBeat {
         return MerkleVerifier.verify(proof);
     }
 
-    /**
-     * Request a direct (non-Merkle) qualified timestamp for a single hash.
-     */
-    public TimestampResult timestamp(String hash) {
-        return timestamp(hash, new AnchorOptions());
-    }
-
-    public TimestampResult timestamp(String hash, AnchorOptions options) {
-        String body = Json.buildObject(
-            "hash",           hash,
-            "hash_algorithm", "sha256",
-            "client_ref",     options.getClientRef(),
-            "description",    options.getDescription()
-        );
-        Map<String, Object> data = http.post("/timestamps", body);
-        return ApiClient.parseTimestamp(data);
-    }
-
     // ── File helpers ──────────────────────────────────────────────────────────
 
     /**

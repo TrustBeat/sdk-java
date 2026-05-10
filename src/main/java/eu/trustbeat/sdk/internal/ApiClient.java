@@ -149,23 +149,6 @@ public final class ApiClient {
         );
     }
 
-    public static TimestampResult parseTimestamp(Map<String, Object> d) {
-        String tokenB64 = Json.str(d, "token");
-        byte[] token = tokenB64 != null
-            ? Base64.getDecoder().decode(tokenB64)
-            : new byte[0];
-        return new TimestampResult(
-            Json.str(d, "id"),
-            Json.str(d, "hash"),
-            Json.str(d, "hash_algorithm"),
-            token,
-            Json.str(d, "token_format"),
-            Json.str(d, "tsa_serial"),
-            Json.str(d, "provider"),
-            Json.str(d, "timestamped_at")
-        );
-    }
-
     /** Returns true if the response looks like a completed proof (has merkle_root). */
     public static boolean looksLikeProof(Map<String, Object> data) {
         return data.containsKey("merkle_root") && data.get("merkle_root") != null;
