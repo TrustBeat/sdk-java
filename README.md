@@ -39,9 +39,6 @@ boolean valid = tb.verify(proof);
 AnchorJob job = tb.anchor("e3b0c44298fc1c149afb4c8996fb92427ae41e4649b934ca495991b7852b855");
 AnchorProof waited = tb.anchorWait(job.getId());  // polls up to 11 min
 
-// Direct qualified timestamp (1 credit, instant)
-TimestampResult ts = tb.timestamp("e3b0c44298fc1c149afb4c8996fb92427ae41e4649b934ca495991b7852b855");
-Files.write(Path.of("timestamp.tsr"), ts.getToken());  // RFC 3161 DER token
 ```
 
 ## Requirements
