@@ -108,14 +108,15 @@ public final class TrustBeat {
 
     /**
      * Submit up to 100 SHA-256 hashes in a single batch request.
-     * Returns an empty list immediately for empty input.
+     * Returns a {@link BatchSubmission} grouping all items under a single submissionId.
+     * Use {@link #anchorBatchWait(BatchSubmission)} to block until all proofs are ready.
      */
-    public List<AnchorJob> anchorBatch(List<String> hashes) {
+    public BatchSubmission anchorBatch(List<String> hashes) {
         return anchorBatch(hashes, new AnchorOptions());
     }
 
-    public List<AnchorJob> anchorBatch(List<String> hashes, AnchorOptions options) {
-        if (hashes.isEmpty()) return new ArrayList<>();
+    public BatchSubmission anchorBatch(List<String> hashes, AnchorOptions options) {
+        if (hashes.isEmpty()) return new BatchSubmission("", new ArrayList<>());
         if (hashes.size() > 100)
             throw new IllegalArgumentException("anchorBatch: maximum 100 hashes per request");
 
@@ -136,11 +137,79 @@ public final class TrustBeat {
         body = body.replace("\"hashes\":\"" + items + "\"", "\"hashes\":" + items);
 
         Map<String, Object> data = http.post("/anchors/batch", body);
+        String submissionId = Json.str(data, "submission_id");
+        if (submissionId == null) submissionId = "";
         List<AnchorJob> jobs = new ArrayList<>();
         for (Map<String, Object> item : Json.array(data, "accepted")) {
             jobs.add(ApiClient.parseAnchorJob(item));
         }
-        return jobs;
+        return new BatchSubmission(submissionId, jobs);
+    }
+
+    /**
+     * Return anchored/pending counts for a batch submission.
+     *
+     * @param submissionId the ID returned by {@link #anchorBatch}
+     */
+    public BatchStatus getBatchStatus(String submissionId) {
+        String path = "/anchors/batch/" + URLEncoder.encode(submissionId, StandardCharsets.UTF_8) + "/status";
+        Map<String, Object> data = http.get(path);
+        return new BatchStatus(
+            Json.str(data, "submission_id") != null ? Json.str(data, "submission_id") : submissionId,
+            Json.intVal(data, "total"),
+            Json.intVal(data, "anchored"),
+            Json.intVal(data, "pending")
+        );
+    }
+
+    /**
+     * Return all anchored inclusion proofs for a batch submission.
+     *
+     * @param submissionId the ID returned by {@link #anchorBatch}
+     */
+    public List<AnchorProof> getBatchProofs(String submissionId) {
+        String path = "/anchors/batch/" + URLEncoder.encode(submissionId, StandardCharsets.UTF_8) + "/proofs";
+        Map<String, Object> data = http.get(path);
+        List<AnchorProof> proofs = new ArrayList<>();
+        for (Map<String, Object> p : Json.array(data, "proofs")) {
+            proofs.add(ApiClient.parseProof(p));
+        }
+        return proofs;
+    }
+
+    /**
+     * Poll until all hashes in a batch submission are anchored, then return all proofs.
+     * Polls with defaults: 900s timeout, 15s interval.
+     */
+    public List<AnchorProof> anchorBatchWait(BatchSubmission submission) {
+        return anchorBatchWait(submission, 900, 15);
+    }
+
+    /**
+     * Poll until all hashes in a batch submission are anchored, then return all proofs.
+     *
+     * @param submission  the {@link BatchSubmission} returned by {@link #anchorBatch}
+     * @param timeoutSecs maximum seconds to wait
+     * @param pollSecs    polling interval in seconds
+     */
+    public List<AnchorProof> anchorBatchWait(BatchSubmission submission, int timeoutSecs, int pollSecs) {
+        long deadline = System.currentTimeMillis() + (long) timeoutSecs * 1000;
+        while (true) {
+            BatchStatus status = getBatchStatus(submission.getSubmissionId());
+            if (status.getPending() == 0 && status.getTotal() > 0) {
+                return getBatchProofs(submission.getSubmissionId());
+            }
+            if (System.currentTimeMillis() >= deadline) {
+                throw new TrustBeatException(
+                    "anchorBatchWait timed out after " + timeoutSecs + "s for " + submission.getSubmissionId());
+            }
+            try {
+                Thread.sleep((long) pollSecs * 1000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new TrustBeatException("anchorBatchWait interrupted");
+            }
+        }
     }
 
     /**
