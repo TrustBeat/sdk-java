@@ -504,4 +504,90 @@ public final class TrustBeat {
         Map<String, Object> data = http.post("/validate/certificate", body);
         return ApiClient.parseCertValidationResult(data);
     }
+
+    // ── Audit Trail ────────────────────────────────────────────────────────────
+
+    /**
+     * Submit a single audit event for tamper-evident Merkle anchoring.
+     * Returns the {@code eventId} immediately (202 Accepted).
+     *
+     * @param trailCategory logical trail, e.g. {@code "financial"}
+     * @param actor         who performed the action, e.g. {@code "user:42"}
+     * @param action        machine-readable verb, e.g. {@code "payment.approved"}
+     * @param ts            ISO 8601 timestamp of when the event occurred
+     * @return event_id string
+     */
+    public String submitAuditEvent(String trailCategory, String actor, String action, String ts) {
+        String body = Json.buildObject(
+            "trail_category", trailCategory,
+            "actor",          actor,
+            "action",         action,
+            "ts",             ts
+        );
+        Map<String, Object> data = http.post("/audit/events", body);
+        return (String) data.get("event_id");
+    }
+
+    /**
+     * Fetch the Merkle inclusion proof for an anchored audit event.
+     * Returns {@code null} if the event exists but is not yet anchored.
+     *
+     * @param eventId ID returned by {@link #submitAuditEvent}
+     * @throws NotFoundException if the eventId is unknown
+     */
+    public AuditEventProof getAuditEventProof(String eventId) {
+        Map<String, Object> data = http.get("/audit/events/" + eventId + "/proof");
+        String status = (String) data.get("status");
+        if ("pending".equals(status)) return null;
+        return ApiClient.parseAuditEventProof(data);
+    }
+
+    /**
+     * Query audit events with optional filters. Returns one page of results.
+     *
+     * @param trailCategory filter by trail category (null = any)
+     * @param page          1-based page number
+     * @param pageSize      events per page (max 100)
+     */
+    @SuppressWarnings("unchecked")
+    public List<AuditEvent> listAuditEvents(String trailCategory, int page, int pageSize) {
+        StringBuilder qs = new StringBuilder("/audit/events?page=")
+            .append(page).append("&page_size=").append(pageSize);
+        if (trailCategory != null && !trailCategory.isEmpty())
+            qs.append("&trail_category=").append(trailCategory);
+        Map<String, Object> data = http.get(qs.toString());
+        List<Map<String, Object>> events = (List<Map<String, Object>>) data.getOrDefault("events", List.of());
+        return events.stream().map(ApiClient::parseAuditEvent).collect(java.util.stream.Collectors.toList());
+    }
+
+    /**
+     * Export audit events as a court-admissible ZIP package.
+     * Blocks until the export job completes (polls every 3 s, up to 5 min).
+     *
+     * @param trailCategory restrict to one trail category, or null for all
+     * @param fromIso       ISO 8601 start timestamp, or null
+     * @param toIso         ISO 8601 end timestamp, or null
+     * @return ZIP file bytes
+     */
+    public byte[] exportAuditEvents(String trailCategory, String fromIso, String toIso) {
+        StringBuilder body = new StringBuilder("{");
+        boolean first = true;
+        if (trailCategory != null) { body.append("\"trail_category\":\"").append(trailCategory).append("\""); first = false; }
+        if (fromIso != null) { if (!first) body.append(","); body.append("\"from\":\"").append(fromIso).append("\""); first = false; }
+        if (toIso   != null) { if (!first) body.append(","); body.append("\"to\":\"").append(toIso).append("\""); }
+        body.append("}");
+        Map<String, Object> jobData = http.post("/audit/export", body.toString());
+        String jobId = (String) jobData.get("job_id");
+        long deadline = System.currentTimeMillis() + 300_000L;
+        while (true) {
+            ApiClient.RawResponse raw = http.getRaw("/audit/export/" + jobId);
+            if (raw.isZip()) return raw.body;
+            Map<String, Object> status = raw.json();
+            String s = (String) status.get("status");
+            if ("failed".equals(s)) throw new TrustBeatException((String) status.getOrDefault("error", "Export failed"), 0, null);
+            if (System.currentTimeMillis() > deadline) throw new TrustBeatException("Export timed out", 0, null);
+            try { Thread.sleep(3000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); break; }
+        }
+        throw new TrustBeatException("Export interrupted", 0, null);
+    }
 }

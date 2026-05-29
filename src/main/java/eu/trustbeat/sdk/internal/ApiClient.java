@@ -42,6 +42,36 @@ public final class ApiClient {
         return send("GET", path, null);
     }
 
+    /** A raw HTTP response for endpoints that may return binary data. */
+    public static final class RawResponse {
+        public final int    status;
+        public final String contentType;
+        public final byte[] body;
+        public RawResponse(int status, String contentType, byte[] body) {
+            this.status = status; this.contentType = contentType; this.body = body;
+        }
+        public boolean isZip() { return contentType != null && contentType.startsWith("application/zip"); }
+        public Map<String, Object> json() { return Json.parseObject(new String(body, StandardCharsets.UTF_8)); }
+    }
+
+    public RawResponse getRaw(String path) {
+        HttpRequest req = HttpRequest.newBuilder()
+            .uri(URI.create(baseUrl + path))
+            .header("Authorization", "Bearer " + apiKey)
+            .timeout(Duration.ofSeconds(60))
+            .GET()
+            .build();
+        HttpResponse<byte[]> resp;
+        try {
+            resp = http.send(req, HttpResponse.BodyHandlers.ofByteArray());
+        } catch (IOException | InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new TrustBeatException("Request failed: " + e.getMessage());
+        }
+        String ct = resp.headers().firstValue("content-type").orElse("");
+        return new RawResponse(resp.statusCode(), ct, resp.body());
+    }
+
     private Map<String, Object> send(String method, String path, String body) {
         HttpRequest.Builder req = HttpRequest.newBuilder()
             .uri(URI.create(baseUrl + path))
@@ -254,6 +284,48 @@ public final class ApiClient {
     }
 
     @SuppressWarnings("unchecked")
+    @SuppressWarnings("unchecked")
+    public static eu.trustbeat.sdk.AuditEvent parseAuditEvent(Map<String, Object> d) {
+        return new eu.trustbeat.sdk.AuditEvent(
+            Json.str(d, "event_id"),
+            Json.str(d, "trail_category"),
+            Json.str(d, "actor"),
+            Json.str(d, "action"),
+            Json.str(d, "ts"),
+            Json.str(d, "received_at"),
+            Json.bool(d, "anchored", false),
+            Json.str(d, "system"),
+            Json.str(d, "resource")
+        );
+    }
+
+    @SuppressWarnings("unchecked")
+    public static eu.trustbeat.sdk.AuditEventProof parseAuditEventProof(Map<String, Object> d) {
+        List<Map<String, Object>> rawPath = (List<Map<String, Object>>) d.getOrDefault("merkle_path", List.of());
+        List<eu.trustbeat.sdk.AuditProofStep> path = rawPath.stream()
+            .map(s -> new eu.trustbeat.sdk.AuditProofStep(Json.str(s, "sibling"), Json.str(s, "side")))
+            .collect(Collectors.toList());
+        return new eu.trustbeat.sdk.AuditEventProof(
+            Json.str(d, "event_id"),
+            Json.str(d, "canonical_hash"),
+            Json.str(d, "batch_id"),
+            Json.intVal(d, "leaf_index"),
+            path,
+            Json.str(d, "anchored_at")
+        );
+    }
+
+    public static eu.trustbeat.sdk.AuditExportJob parseAuditExportJob(Map<String, Object> d) {
+        Object ec = d.get("event_count");
+        Integer eventCount = (ec instanceof Number) ? ((Number) ec).intValue() : null;
+        return new eu.trustbeat.sdk.AuditExportJob(
+            Json.str(d, "job_id"),
+            Json.str(d, "status"),
+            eventCount,
+            Json.str(d, "error")
+        );
+    }
+
     public static eu.trustbeat.sdk.CertificateValidationResult parseCertValidationResult(Map<String, Object> d) {
         List<String> keyUsage = (List<String>) d.getOrDefault("key_usage", List.of());
         return new eu.trustbeat.sdk.CertificateValidationResult(
