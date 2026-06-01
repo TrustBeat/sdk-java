@@ -284,7 +284,6 @@ public final class ApiClient {
     }
 
     @SuppressWarnings("unchecked")
-    @SuppressWarnings("unchecked")
     public static eu.trustbeat.sdk.AuditEvent parseAuditEvent(Map<String, Object> d) {
         return new eu.trustbeat.sdk.AuditEvent(
             Json.str(d, "event_id"),

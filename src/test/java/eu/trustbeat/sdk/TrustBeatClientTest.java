@@ -166,22 +166,23 @@ class TrustBeatClientTest {
     // ── anchorBatch() ─────────────────────────────────────────────────────────
 
     @Test
-    void anchorBatchReturnsListOfJobs() {
-        String resp = "{\"accepted\":[" + anchorAcceptedJson("t1") + "," +
+    void anchorBatchReturnsBatchSubmission() {
+        String resp = "{\"submission_id\":\"sub-abc\",\"accepted\":[" + anchorAcceptedJson("t1") + "," +
                       anchorAcceptedJson("t2") + "],\"total\":2}";
         addHandler("/v1/anchors/batch", 202, resp);
-        List<AnchorJob> jobs = client().anchorBatch(
+        BatchSubmission result = client().anchorBatch(
             Arrays.asList("a".repeat(64), "b".repeat(64)));
-        assertEquals(2, jobs.size());
-        assertEquals("t1", jobs.get(0).getId());
-        assertEquals("t2", jobs.get(1).getId());
+        assertEquals("sub-abc", result.getSubmissionId());
+        assertEquals(2, result.getItems().size());
+        assertEquals("t1", result.getItems().get(0).getId());
+        assertEquals("t2", result.getItems().get(1).getId());
     }
 
     @Test
     void anchorBatchEmptyListReturnsEmptyWithoutRequest() {
         // No handler registered — if a request is made the test hangs/fails
-        List<AnchorJob> result = client().anchorBatch(Collections.emptyList());
-        assertTrue(result.isEmpty());
+        BatchSubmission result = client().anchorBatch(Collections.emptyList());
+        assertTrue(result.getItems().isEmpty());
     }
 
     @Test
