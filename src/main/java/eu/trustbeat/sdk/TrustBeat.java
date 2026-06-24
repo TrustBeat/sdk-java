@@ -98,11 +98,11 @@ public final class TrustBeat {
     public AnchorJob anchor(String hash, AnchorOptions options) {
         String body = Json.buildObject(
             "hash",           hash,
-            "hash_algorithm", "sha256",
+            "hash_algorithm", "SHA-256",
             "client_ref",     options.getClientRef(),
             "description",    options.getDescription()
         );
-        Map<String, Object> data = http.post("/anchors", body);
+        Map<String, Object> data = http.post("/anchor", body);
         return ApiClient.parseAnchorJob(data);
     }
 
@@ -123,20 +123,25 @@ public final class TrustBeat {
         StringBuilder items = new StringBuilder("[");
         for (int i = 0; i < hashes.size(); i++) {
             if (i > 0) items.append(",");
-            items.append(Json.buildObject("hash", hashes.get(i), "hash_algorithm", "sha256"));
+            items.append(Json.buildObject("hash", hashes.get(i), "hash_algorithm", "SHA-256"));
         }
         items.append("]");
 
-        String body = Json.buildObject(
-            "hashes",      items.toString(),
-            "client_ref",  options.getClientRef(),
-            "description", options.getDescription()
-        );
+        // Build the body directly: `items` is already a JSON array, so it must be
+        // spliced in raw (not as an escaped JSON string). Optional string fields are
+        // appended via Json.buildObject (reusing its escaping) with the braces stripped.
+        StringBuilder body = new StringBuilder("{\"hashes\":").append(items);
+        if (options.getClientRef() != null) {
+            String o = Json.buildObject("client_ref", options.getClientRef());
+            body.append(",").append(o, 1, o.length() - 1);
+        }
+        if (options.getDescription() != null) {
+            String o = Json.buildObject("description", options.getDescription());
+            body.append(",").append(o, 1, o.length() - 1);
+        }
+        body.append("}");
 
-        // The hashes value is already a JSON array — strip the extra quotes
-        body = body.replace("\"hashes\":\"" + items + "\"", "\"hashes\":" + items);
-
-        Map<String, Object> data = http.post("/anchors/batch", body);
+        Map<String, Object> data = http.post("/anchor/batch", body.toString());
         String submissionId = Json.str(data, "submission_id");
         if (submissionId == null) submissionId = "";
         List<AnchorJob> jobs = new ArrayList<>();
@@ -152,7 +157,7 @@ public final class TrustBeat {
      * @param submissionId the ID returned by {@link #anchorBatch}
      */
     public BatchStatus getBatchStatus(String submissionId) {
-        String path = "/anchors/batch/" + URLEncoder.encode(submissionId, StandardCharsets.UTF_8) + "/status";
+        String path = "/anchor/batch/" + URLEncoder.encode(submissionId, StandardCharsets.UTF_8) + "/status";
         Map<String, Object> data = http.get(path);
         return new BatchStatus(
             Json.str(data, "submission_id") != null ? Json.str(data, "submission_id") : submissionId,
@@ -168,7 +173,7 @@ public final class TrustBeat {
      * @param submissionId the ID returned by {@link #anchorBatch}
      */
     public List<AnchorProof> getBatchProofs(String submissionId) {
-        String path = "/anchors/batch/" + URLEncoder.encode(submissionId, StandardCharsets.UTF_8) + "/proofs";
+        String path = "/anchor/batch/" + URLEncoder.encode(submissionId, StandardCharsets.UTF_8) + "/proofs";
         Map<String, Object> data = http.get(path);
         List<AnchorProof> proofs = new ArrayList<>();
         for (Map<String, Object> p : Json.array(data, "proofs")) {
@@ -217,7 +222,7 @@ public final class TrustBeat {
      * Returns {@code null} if the anchor is still pending.
      */
     public AnchorProof getProof(String trackingId) {
-        String path = "/anchors/" + URLEncoder.encode(trackingId, StandardCharsets.UTF_8);
+        String path = "/anchor/" + URLEncoder.encode(trackingId, StandardCharsets.UTF_8) + "/proof";
         Map<String, Object> data = http.get(path);
         if (!ApiClient.looksLikeProof(data)) return null;
         return ApiClient.parseProof(data);

@@ -102,7 +102,7 @@ class TrustBeatClientTest {
 
     @Test
     void anchorReturnsAnchorJob() {
-        addHandler("/v1/anchors", 202, anchorAcceptedJson("track-1"));
+        addHandler("/v1/anchor", 202, anchorAcceptedJson("track-1"));
         AnchorJob job = client().anchor("a".repeat(64));
         assertEquals("track-1", job.getId());
         assertEquals("pending",  job.getStatus());
@@ -122,11 +122,11 @@ class TrustBeatClientTest {
             .baseUrl("http://localhost:" + port + "/v1-auth")
             .build();
         // Can't easily override path — verify header via a dedicated endpoint
-        server.createContext("/v1-auth/anchors", ex -> {
+        server.createContext("/v1-auth/anchor", ex -> {
             authHeader.set(ex.getRequestHeaders().getFirst("Authorization"));
             try { respond(ex, 202, anchorAcceptedJson("t")); }
             catch (IOException ignored) {}
-            server.removeContext("/v1-auth/anchors");
+            server.removeContext("/v1-auth/anchor");
         });
         new TrustBeat.Builder()
             .apiKey("tb_live_mykey")
@@ -149,12 +149,12 @@ class TrustBeatClientTest {
             .apiKey("tb_live_test")
             .baseUrl("http://localhost:" + port + "/v1-ref")
             .build();
-        server.createContext("/v1-ref/anchors", ex -> {
+        server.createContext("/v1-ref/anchor", ex -> {
             try {
                 body.set(new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
                 respond(ex, 202, anchorAcceptedJson("t"));
             } catch (IOException ignored) {}
-            server.removeContext("/v1-ref/anchors");
+            server.removeContext("/v1-ref/anchor");
         });
         new TrustBeat.Builder()
             .apiKey("tb_live_test")
@@ -169,13 +169,36 @@ class TrustBeatClientTest {
     void anchorBatchReturnsBatchSubmission() {
         String resp = "{\"submission_id\":\"sub-abc\",\"accepted\":[" + anchorAcceptedJson("t1") + "," +
                       anchorAcceptedJson("t2") + "],\"total\":2}";
-        addHandler("/v1/anchors/batch", 202, resp);
+        addHandler("/v1/anchor/batch", 202, resp);
         BatchSubmission result = client().anchorBatch(
             Arrays.asList("a".repeat(64), "b".repeat(64)));
         assertEquals("sub-abc", result.getSubmissionId());
         assertEquals(2, result.getItems().size());
         assertEquals("t1", result.getItems().get(0).getId());
         assertEquals("t2", result.getItems().get(1).getId());
+    }
+
+    @Test
+    void anchorBatchSendsHashesAsJsonArray() {
+        // Guards against the escaped-string bug: `hashes` must be a real JSON array,
+        // not a quoted string. The mock captures and inspects the request body.
+        AtomicReference<String> captured = new AtomicReference<>();
+        server.createContext("/v1arr/anchor/batch", ex -> {
+            try {
+                captured.set(new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+                respond(ex, 202, "{\"submission_id\":\"s\",\"accepted\":[],\"total\":0}");
+            } catch (IOException ignored) {}
+            server.removeContext("/v1arr/anchor/batch");
+        });
+        new TrustBeat.Builder()
+            .apiKey("tb_live_test")
+            .baseUrl("http://localhost:" + port + "/v1arr")
+            .build()
+            .anchorBatch(Arrays.asList("a".repeat(64), "b".repeat(64)));
+        String body = captured.get();
+        assertTrue(body.contains("\"hashes\":["), "hashes must be a JSON array, got: " + body);
+        assertFalse(body.contains("\"hashes\":\""), "hashes must not be a quoted string");
+        assertTrue(body.contains("\"hash_algorithm\":\"SHA-256\""), "algorithm must be SHA-256");
     }
 
     @Test
@@ -195,7 +218,7 @@ class TrustBeatClientTest {
 
     @Test
     void getProofReturnsProofWhenAnchored() {
-        addHandler("/v1/anchors/track-1", 200, proofJson("track-1"));
+        addHandler("/v1/anchor/track-1/proof", 200, proofJson("track-1"));
         AnchorProof proof = client().getProof("track-1");
         assertNotNull(proof);
         assertArrayEquals("DER_BYTES".getBytes(), proof.getToken());
@@ -204,7 +227,7 @@ class TrustBeatClientTest {
 
     @Test
     void getProofReturnsNullWhenPending() {
-        addHandler("/v1/anchors/pending-1", 200, anchorAcceptedJson("pending-1"));
+        addHandler("/v1/anchor/pending-1/proof", 200, anchorAcceptedJson("pending-1"));
         assertNull(client().getProof("pending-1"));
     }
 
@@ -213,12 +236,12 @@ class TrustBeatClientTest {
     @Test
     void anchorWaitPollsUntilProofReady() {
         AtomicInteger calls = new AtomicInteger(0);
-        server.createContext("/v1/anchors/wait-1", ex -> {
+        server.createContext("/v1/anchor/wait-1/proof", ex -> {
             try {
                 int n = calls.incrementAndGet();
                 respond(ex, 200, n == 1 ? anchorAcceptedJson("wait-1") : proofJson("wait-1"));
             } catch (IOException ignored) {}
-            if (calls.get() >= 2) server.removeContext("/v1/anchors/wait-1");
+            if (calls.get() >= 2) server.removeContext("/v1/anchor/wait-1/proof");
         });
         AnchorProof proof = client().anchorWait("wait-1", 30, 0);
         assertNotNull(proof);
@@ -227,9 +250,9 @@ class TrustBeatClientTest {
 
     @Test
     void anchorWaitThrowsOnTimeout() {
-        addHandler("/v1/anchors/timeout-1", 200, anchorAcceptedJson("timeout-1"));
+        addHandler("/v1/anchor/timeout-1/proof", 200, anchorAcceptedJson("timeout-1"));
         // Need a handler that stays available for the first poll
-        server.createContext("/v1/anchors/timeout-always", ex -> {
+        server.createContext("/v1/anchor/timeout-always/proof", ex -> {
             try { respond(ex, 200, anchorAcceptedJson("timeout-always")); }
             catch (IOException ignored) {}
         });
@@ -240,7 +263,7 @@ class TrustBeatClientTest {
                 .build()
                 .anchorWait("timeout-always", 0, 0));
         assertTrue(ex.getMessage().contains("timed out"));
-        server.removeContext("/v1/anchors/timeout-always");
+        server.removeContext("/v1/anchor/timeout-always/proof");
     }
 
     // ── verify() ─────────────────────────────────────────────────────────────
@@ -269,7 +292,7 @@ class TrustBeatClientTest {
 
     @Test
     void returns401AsAuthException() {
-        addHandler("/v1/anchors", 401,
+        addHandler("/v1/anchor", 401,
             "{\"error\":{\"message\":\"Bad key\",\"code\":\"UNAUTHORIZED\"}}");
         assertThrows(AuthException.class,
             () -> new TrustBeat.Builder().apiKey("bad_key")
@@ -279,26 +302,26 @@ class TrustBeatClientTest {
 
     @Test
     void returns402AsQuotaException() {
-        addHandler("/v1/anchors", 402, "{\"error\":{\"message\":\"Quota exceeded\"}}");
+        addHandler("/v1/anchor", 402, "{\"error\":{\"message\":\"Quota exceeded\"}}");
         assertThrows(QuotaException.class, () -> client().anchor("a".repeat(64)));
     }
 
     @Test
     void returns404AsNotFoundException() {
-        addHandler("/v1/anchors/nope", 404,
+        addHandler("/v1/anchor/nope/proof", 404,
             "{\"error\":{\"message\":\"Not found\",\"code\":\"NOT_FOUND\"}}");
         assertThrows(NotFoundException.class, () -> client().getProof("nope"));
     }
 
     @Test
     void returns429AsRateLimitException() {
-        addHandler("/v1/anchors", 429, "{\"error\":{\"message\":\"Slow down\"}}");
+        addHandler("/v1/anchor", 429, "{\"error\":{\"message\":\"Slow down\"}}");
         assertThrows(RateLimitException.class, () -> client().anchor("a".repeat(64)));
     }
 
     @Test
     void returns500AsTrustBeatExceptionWithStatus() {
-        addHandler("/v1/anchors", 500, "{\"error\":{\"message\":\"Server error\"}}");
+        addHandler("/v1/anchor", 500, "{\"error\":{\"message\":\"Server error\"}}");
         TrustBeatException ex = assertThrows(TrustBeatException.class,
             () -> client().anchor("a".repeat(64)));
         assertEquals(500, ex.getStatus());
@@ -365,13 +388,13 @@ class TrustBeatClientTest {
     @Test
     void anchorFileDescriptionDefaultsToFilename() throws Exception {
         AtomicReference<String> capturedDesc = new AtomicReference<>();
-        server.createContext("/v1/anchors", ex -> {
+        server.createContext("/v1/anchor", ex -> {
             String body = new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
             int start = body.indexOf("\"description\":\"") + 15;
             int end   = body.indexOf("\"", start);
             capturedDesc.set(body.substring(start, end));
             respond(ex, 202, anchorAcceptedJson("track-fd"));
-            server.removeContext("/v1/anchors");
+            server.removeContext("/v1/anchor");
         });
 
         Path tmp = Files.createTempFile("tb-file-desc", ".txt");
@@ -387,13 +410,13 @@ class TrustBeatClientTest {
     @Test
     void anchorFileCustomDescriptionOverridesFilename() throws Exception {
         AtomicReference<String> capturedDesc = new AtomicReference<>();
-        server.createContext("/v1/anchors", ex -> {
+        server.createContext("/v1/anchor", ex -> {
             String body = new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
             int start = body.indexOf("\"description\":\"") + 15;
             int end   = body.indexOf("\"", start);
             capturedDesc.set(body.substring(start, end));
             respond(ex, 202, anchorAcceptedJson("track-fd2"));
-            server.removeContext("/v1/anchors");
+            server.removeContext("/v1/anchor");
         });
 
         Path tmp = Files.createTempFile("tb-file-desc2", ".txt");
