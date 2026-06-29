@@ -1,5 +1,7 @@
 package eu.trustbeat.sdk;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -43,8 +45,25 @@ public final class Smoke {
         return out;
     }
 
-    public static void main(String[] args) {
-        if (args.length < 1) fail("usage: Smoke {submit|verify <id>|submit-batch|verify-batch <id>}");
+    // Fixed AI-decision metadata — only the input/output hashes vary per run.
+    private static AiDecisionMetadata aiMeta() {
+        return new AiDecisionMetadata.Builder()
+            .modelId("claude-opus-4-8")
+            .systemName("trustbeat-sdk-smoke")
+            .riskCategory("employment")
+            .decisionType("classification")
+            .humanOversight(true)
+            .timeEnvelope(new AiTimeEnvelope("2026-06-29T10:00:00Z", "2026-06-29T10:00:01Z"))
+            .build();
+    }
+
+    private static String env(String name) {
+        return System.getenv(name);
+    }
+
+    public static void main(String[] args) throws Exception {
+        if (args.length < 1) fail("usage: Smoke {submit|verify <id>|submit-batch|verify-batch <id>"
+            + "|submit-ai|verify-ai <id>|submit-file|submit-audit|verify-audit <id>|verify-sig|validate-cert}");
         String cmd = args[0];
 
         switch (cmd) {
@@ -100,6 +119,95 @@ public final class Smoke {
                     if (!c.verify(p)) fail("verify-batch: local Merkle verification failed for " + p.getId());
                 }
                 System.out.println("OK batch sid=" + sid + " n=" + proofs.size());
+                break;
+            }
+            case "submit-ai": {
+                AiDecisionJob job = client().anchorAiDecision(env("TB_AI_INPUT"), env("TB_AI_OUTPUT"), aiMeta());
+                if (job.getId() == null || job.getId().isEmpty()) fail("submit-ai: empty tracking id");
+                System.out.println(job.getId());
+                break;
+            }
+            case "verify-ai": {
+                if (args.length < 2) fail("usage: Smoke verify-ai <id>");
+                String id = args[1];
+                String inHash = env("TB_AI_INPUT"), outHash = env("TB_AI_OUTPUT");
+                TrustBeat c = client();
+                AiDecisionProof proof = c.getAiDecisionProof(id);
+                if (proof == null) fail("verify-ai: proof for " + id + " not ready");
+                if (!proof.getInputHash().equalsIgnoreCase(inHash))
+                    fail("verify-ai: input_hash echo mismatch " + proof.getInputHash() + " != " + inHash);
+                if (!proof.getOutputHash().equalsIgnoreCase(outHash))
+                    fail("verify-ai: output_hash echo mismatch " + proof.getOutputHash() + " != " + outHash);
+                if (!"VERIFIED".equals(proof.getVerificationStatus()))
+                    fail("verify-ai: status " + proof.getVerificationStatus() + " != VERIFIED");
+                if (proof.getProof() == null) fail("verify-ai: missing Merkle proof");
+                if (!c.verify(proof.getProof())) fail("verify-ai: local Merkle verification failed");
+                System.out.println("OK ai id=" + id + " combined="
+                    + proof.getCombinedHash().substring(0, 16) + "…");
+                break;
+            }
+            case "submit-file": {
+                AnchorJob job = client().anchorFile(Path.of(env("TB_FILE_PATH")));
+                if (job.getId() == null || job.getId().isEmpty()) fail("submit-file: empty tracking id");
+                System.out.println(job.getId());
+                break;
+            }
+            case "submit-audit": {
+                String eventId = client().submitAuditEvent(
+                    env("TB_AUDIT_CATEGORY"), env("TB_AUDIT_ACTOR"),
+                    env("TB_AUDIT_ACTION"), env("TB_AUDIT_TS"));
+                if (eventId == null || eventId.isEmpty()) fail("submit-audit: empty event_id");
+                System.out.println(eventId);
+                break;
+            }
+            case "verify-audit": {
+                if (args.length < 2) fail("usage: Smoke verify-audit <id>");
+                String id = args[1];
+                TrustBeat c = client();
+                AuditEventProof proof = c.getAuditEventProof(id);
+                if (proof == null) fail("verify-audit: proof for " + id + " not ready");
+                if (!proof.getEventId().equals(id))
+                    fail("verify-audit: event_id echo mismatch " + proof.getEventId() + " != " + id);
+                if (proof.getCanonicalHash() == null || proof.getCanonicalHash().isEmpty())
+                    fail("verify-audit: empty canonical_hash");
+                if (proof.getBatchId() == null || proof.getBatchId().isEmpty())
+                    fail("verify-audit: empty batch_id");
+                if (proof.getLeafIndex() < 0 || proof.getMerklePath() == null)
+                    fail("verify-audit: invalid leaf_index/merkle_path");
+                List<AuditEvent> events = c.listAuditEvents(env("TB_AUDIT_CATEGORY"), 1, 25);
+                if (events.stream().noneMatch(e -> e.getEventId().equals(id)))
+                    fail("verify-audit: " + id + " not returned by listAuditEvents");
+                System.out.println("OK audit id=" + id + " batch="
+                    + proof.getBatchId().substring(0, Math.min(12, proof.getBatchId().length()))
+                    + "… leaf=" + proof.getLeafIndex());
+                break;
+            }
+            case "verify-sig": {
+                byte[] doc = Files.readAllBytes(Path.of(env("TB_SIG_DOC")));
+                String expected = env("TB_SIG_DOCHASH");
+                VerificationReport report = client().verifySignature(doc, env("TB_SIG_FORMAT"));
+                if (!report.getDocumentHash().equalsIgnoreCase(expected))
+                    fail("verify-sig: document_hash mismatch " + report.getDocumentHash() + " != " + expected);
+                if (report.getVerdict() == null || report.getVerdict().isEmpty())
+                    fail("verify-sig: empty verdict");
+                if (report.getSignatures() == null || report.getSignatures().isEmpty())
+                    fail("verify-sig: report has no signatures");
+                System.out.println("OK sig verdict=" + report.getVerdict()
+                    + " signatures=" + report.getSignatures().size());
+                break;
+            }
+            case "validate-cert": {
+                byte[] cert = Files.readAllBytes(Path.of(env("TB_CERT_PATH")));
+                CertificateValidationResult res = client().validateCertificate(cert);
+                if (res.getSubject() == null || res.getSubject().isEmpty())
+                    fail("validate-cert: empty subject");
+                if (res.getIssuer() == null || res.getIssuer().isEmpty())
+                    fail("validate-cert: empty issuer");
+                if (res.getValidatedAt() == null || res.getValidatedAt().isEmpty())
+                    fail("validate-cert: empty validated_at");
+                System.out.println("OK cert subject="
+                    + res.getSubject().substring(0, Math.min(24, res.getSubject().length()))
+                    + "… qualified=" + res.isQualified());
                 break;
             }
             default:
