@@ -21,13 +21,15 @@ implementation 'eu.trustbeat:trustbeat-sdk:0.1.0'
 ## Quickstart
 
 ```java
-import eu.trustbeat.TrustBeat;
-import eu.trustbeat.model.AnchorProof;
+import eu.trustbeat.sdk.TrustBeat;
+import eu.trustbeat.sdk.AnchorJob;
+import eu.trustbeat.sdk.AnchorProof;
 
-TrustBeat tb = new TrustBeat("tb_live_...");
+TrustBeat tb = new TrustBeat.Builder().apiKey("tb_live_...").build();
 
-// Anchor a file (SHA-256 computed locally, file never leaves your machine)
-AnchorProof proof = tb.anchorFile(Path.of("contract.pdf"));
+// Anchor a file (SHA-256 computed locally, file never leaves your machine).
+// anchorFileWait() blocks until the proof is ready (next batch, up to 11 min).
+AnchorProof proof = tb.anchorFileWait(Path.of("contract.pdf"));
 System.out.println(proof.getId());          // tracking ID
 System.out.println(proof.getAnchoredAt());  // ISO 8601 timestamp
 System.out.println(proof.getMerkleRoot());  // Merkle root of the batch
@@ -35,8 +37,8 @@ System.out.println(proof.getMerkleRoot());  // Merkle root of the batch
 // Verify locally — no network call
 boolean valid = tb.verify(proof);
 
-// Anchor a raw SHA-256 hash
-AnchorJob job = tb.anchor("e3b0c44298fc1c149afb4c8996fb92427ae41e4649b934ca495991b7852b855");
+// Or anchor a raw SHA-256 hash without blocking, then wait for the proof.
+AnchorJob job = tb.anchor("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
 AnchorProof waited = tb.anchorWait(job.getId());  // polls up to 11 min
 
 ```
