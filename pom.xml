@@ -20,6 +20,25 @@
     </license>
   </licenses>
 
+  <organization>
+    <name>Trustbeat s.r.o.</name>
+    <url>https://trustbeat.eu</url>
+  </organization>
+
+  <developers>
+    <developer>
+      <name>Trustbeat s.r.o.</name>
+      <organization>Trustbeat s.r.o.</organization>
+      <organizationUrl>https://trustbeat.eu</organizationUrl>
+    </developer>
+  </developers>
+
+  <scm>
+    <url>https://github.com/TrustBeat/sdk-java</url>
+    <connection>scm:git:https://github.com/TrustBeat/sdk-java.git</connection>
+    <developerConnection>scm:git:git@github.com:TrustBeat/sdk-java.git</developerConnection>
+  </scm>
+
   <properties>
     <java.version>11</java.version>
     <maven.compiler.source>${java.version}</maven.compiler.source>
@@ -46,6 +65,18 @@
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-plugin</artifactId>
         <version>3.5.2</version>
+      </plugin>
+      <!-- Keep the dev/E2E smoke runner out of the published jar.
+           It stays compiled in target/classes for tests/e2e/sdk_smoke.py. -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-jar-plugin</artifactId>
+        <version>3.4.2</version>
+        <configuration>
+          <excludes>
+            <exclude>**/Smoke.class</exclude>
+          </excludes>
+        </configuration>
       </plugin>
     </plugins>
   </build>
