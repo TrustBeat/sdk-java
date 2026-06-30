@@ -80,4 +80,87 @@
       </plugin>
     </plugins>
   </build>
+
+  <!--
+    Maven Central release plumbing. Inactive by default so `mvn test`/`package`
+    stay fast and need no GPG key. Activate explicitly when cutting a release:
+
+        mvn -P release clean deploy
+
+    Requires: a verified `eu.trustbeat` namespace on central.sonatype.com, a GPG
+    signing key, and a `central` server entry (Portal token) plus GPG passphrase
+    in settings.xml / CI secrets. See RELEASING.md.
+  -->
+  <profiles>
+    <profile>
+      <id>release</id>
+      <build>
+        <plugins>
+          <!-- Required by Central: -sources.jar (Smoke dev runner excluded). -->
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-source-plugin</artifactId>
+            <version>3.3.1</version>
+            <configuration>
+              <excludes>
+                <exclude>**/Smoke.java</exclude>
+              </excludes>
+            </configuration>
+            <executions>
+              <execution>
+                <id>attach-sources</id>
+                <goals><goal>jar-no-fork</goal></goals>
+              </execution>
+            </executions>
+          </plugin>
+
+          <!-- Required by Central: -javadoc.jar. -->
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-javadoc-plugin</artifactId>
+            <version>3.11.2</version>
+            <configuration>
+              <doclint>none</doclint>
+              <quiet>true</quiet>
+            </configuration>
+            <executions>
+              <execution>
+                <id>attach-javadocs</id>
+                <goals><goal>jar</goal></goals>
+              </execution>
+            </executions>
+          </plugin>
+
+          <!-- Required by Central: GPG signatures on every artifact.
+               Passphrase is read from the MAVEN_GPG_PASSPHRASE env var. -->
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-gpg-plugin</artifactId>
+            <version>3.2.7</version>
+            <executions>
+              <execution>
+                <id>sign-artifacts</id>
+                <phase>verify</phase>
+                <goals><goal>sign</goal></goals>
+              </execution>
+            </executions>
+          </plugin>
+
+          <!-- Uploads the bundle to the Central Portal and (auto)publishes it.
+               Credentials come from the <server id="central"> entry. -->
+          <plugin>
+            <groupId>org.sonatype.central</groupId>
+            <artifactId>central-publishing-maven-plugin</artifactId>
+            <version>0.7.0</version>
+            <extensions>true</extensions>
+            <configuration>
+              <publishingServerId>central</publishingServerId>
+              <autoPublish>true</autoPublish>
+              <waitUntil>published</waitUntil>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
 </project>
