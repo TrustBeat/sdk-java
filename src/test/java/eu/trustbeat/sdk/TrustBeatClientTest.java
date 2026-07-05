@@ -428,4 +428,27 @@ class TrustBeatClientTest {
             Files.deleteIfExists(tmp);
         }
     }
+
+    // ── getAiDecisionProof() pending ─────────────────────────────────────────
+
+    @Test
+    void getAiDecisionProofReturnsNullWhilePending() {
+        // Before anchoring the API returns 200 with verification_status "PENDING".
+        addHandler("/v1/ai/decisions/verify/ai-1",
+            200,
+            "{\"id\":\"ai-1\",\"input_hash\":\"\",\"output_hash\":\"\"," +
+            "\"combined_hash\":\"\",\"metadata\":{}," +
+            "\"verification_status\":\"PENDING\",\"anchored_at\":null,\"proof\":null}");
+        assertNull(client().getAiDecisionProof("ai-1"));
+    }
+
+    // ── exportAuditEvents() requires from/to ─────────────────────────────────
+
+    @Test
+    void exportAuditEventsRequiresFromAndTo() {
+        assertThrows(IllegalArgumentException.class,
+            () -> client().exportAuditEvents("financial", null, "2026-04-16T00:00:00Z"));
+        assertThrows(IllegalArgumentException.class,
+            () -> client().exportAuditEvents("financial", "2026-04-15T00:00:00Z", ""));
+    }
 }

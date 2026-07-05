@@ -416,6 +416,10 @@ public final class TrustBeat {
         try {
             String path = "/ai/decisions/verify/" + URLEncoder.encode(trackingId, StandardCharsets.UTF_8);
             Map<String, Object> data = http.get(path);
+            // Before anchoring the API returns 200 with verification_status
+            // "PENDING" and no proof — treat that as "not ready yet" (null) so
+            // pollers keep waiting.
+            if ("PENDING".equals(data.get("verification_status"))) return null;
             return ApiClient.parseAiDecisionProof(data);
         } catch (NotFoundException e) {
             if ("NOT_ANCHORED".equals(e.getCode())) return null;
@@ -570,16 +574,18 @@ public final class TrustBeat {
      * Blocks until the export job completes (polls every 3 s, up to 5 min).
      *
      * @param trailCategory restrict to one trail category, or null for all
-     * @param fromIso       ISO 8601 start timestamp, or null
-     * @param toIso         ISO 8601 end timestamp, or null
+     * @param fromIso       ISO 8601 start timestamp (required)
+     * @param toIso         ISO 8601 end timestamp (required)
      * @return ZIP file bytes
+     * @throws IllegalArgumentException if fromIso or toIso is null/blank
      */
     public byte[] exportAuditEvents(String trailCategory, String fromIso, String toIso) {
+        if (fromIso == null || fromIso.isBlank() || toIso == null || toIso.isBlank())
+            throw new IllegalArgumentException("exportAuditEvents requires both fromIso and toIso");
         StringBuilder body = new StringBuilder("{");
-        boolean first = true;
-        if (trailCategory != null) { body.append("\"trail_category\":\"").append(trailCategory).append("\""); first = false; }
-        if (fromIso != null) { if (!first) body.append(","); body.append("\"from\":\"").append(fromIso).append("\""); first = false; }
-        if (toIso   != null) { if (!first) body.append(","); body.append("\"to\":\"").append(toIso).append("\""); }
+        body.append("\"from\":\"").append(fromIso).append("\",");
+        body.append("\"to\":\"").append(toIso).append("\"");
+        if (trailCategory != null) body.append(",\"trail_category\":\"").append(trailCategory).append("\"");
         body.append("}");
         Map<String, Object> jobData = http.post("/audit/export", body.toString());
         String jobId = (String) jobData.get("job_id");

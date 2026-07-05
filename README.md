@@ -2,6 +2,8 @@
 
 Qualified electronic timestamps and Merkle anchoring — eIDAS-compliant, over a simple API.
 
+Part of **[TrustBeat](https://trustbeat.eu)** — digital trust infrastructure for the EU.
+
 ## Install
 
 **Maven:**
@@ -9,13 +11,13 @@ Qualified electronic timestamps and Merkle anchoring — eIDAS-compliant, over a
 <dependency>
     <groupId>eu.trustbeat</groupId>
     <artifactId>trustbeat-sdk</artifactId>
-    <version>0.1.0</version>
+    <version>0.1.1</version>
 </dependency>
 ```
 
 **Gradle:**
 ```gradle
-implementation 'eu.trustbeat:trustbeat-sdk:0.1.0'
+implementation 'eu.trustbeat:trustbeat-sdk:0.1.1'
 ```
 
 ## Quickstart
