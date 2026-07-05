@@ -538,6 +538,33 @@ public final class TrustBeat {
     }
 
     /**
+     * Submit up to 1,000 audit events in a single batch request. Each event map uses
+     * the same keys as {@link #submitAuditEvent} (trail_category, actor, action, ts).
+     * Returns the event IDs in submission order.
+     */
+    @SuppressWarnings("unchecked")
+    public List<String> submitAuditEvents(List<Map<String, Object>> events) {
+        StringBuilder arr = new StringBuilder("[");
+        for (int i = 0; i < events.size(); i++) {
+            if (i > 0) arr.append(",");
+            Map<String, Object> e = events.get(i);
+            Object[] pairs = new Object[e.size() * 2];
+            int j = 0;
+            for (Map.Entry<String, Object> en : e.entrySet()) {
+                pairs[j++] = en.getKey();
+                pairs[j++] = en.getValue();
+            }
+            arr.append(Json.buildObject(pairs));
+        }
+        arr.append("]");
+        Map<String, Object> data = http.post("/audit/events/batch", arr.toString());
+        List<Object> ids = (List<Object>) data.getOrDefault("event_ids", List.of());
+        List<String> out = new java.util.ArrayList<>();
+        for (Object id : ids) out.add(id == null ? null : id.toString());
+        return out;
+    }
+
+    /**
      * Fetch the Merkle inclusion proof for an anchored audit event.
      * Returns {@code null} if the event exists but is not yet anchored.
      *
@@ -600,5 +627,114 @@ public final class TrustBeat {
             try { Thread.sleep(3000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); break; }
         }
         throw new TrustBeatException("Export interrupted", 0, null);
+    }
+
+    // ── Tamper-Evident Logs (NIS2) ──────────────────────────────────────────────
+
+    /** Submit a log hash for NIS2 Article 21 anchoring (no label). */
+    public LogAnchorJob anchorLog(String logHash, LogMetadata metadata) {
+        return anchorLog(logHash, metadata, null);
+    }
+
+    /**
+     * Submit a log hash for NIS2 Article 21 tamper-evident anchoring. Returns
+     * immediately (202); the log is anchored in the next batch (~10 min). The server
+     * binds {@code metadata} into the Merkle leaf.
+     *
+     * @param logHash  SHA-256 hex digest of the log content (64 hex chars)
+     * @param metadata log source and identity context
+     * @param label    optional free-text cross-reference label, or null
+     */
+    public LogAnchorJob anchorLog(String logHash, LogMetadata metadata, String label) {
+        String outer = Json.buildObject("log_hash", logHash, "label", label);
+        String body = outer.substring(0, outer.lastIndexOf('}'))
+            + ",\"metadata\":" + logMetadataJson(metadata) + "}";
+        Map<String, Object> data = http.post("/logs/anchor", body);
+        return ApiClient.parseLogAnchorJob(data);
+    }
+
+    /**
+     * Fetch the verification result for a log anchor. Returns {@code null} while the
+     * log is still pending (verification_status "PENDING"). Throws
+     * {@link NotFoundException} if the tracking ID is unknown.
+     */
+    public LogProof getLogProof(String trackingId) {
+        String path = "/logs/verify/" + URLEncoder.encode(trackingId, StandardCharsets.UTF_8);
+        Map<String, Object> data = http.get(path);
+        if ("PENDING".equals(data.get("verification_status"))) return null;
+        return ApiClient.parseLogProof(data);
+    }
+
+    /** Get the lightweight status of a log anchor submission (cheap polling). */
+    public LogStatus getLogStatus(String trackingId) {
+        String path = "/logs/" + URLEncoder.encode(trackingId, StandardCharsets.UTF_8) + "/status";
+        return ApiClient.parseLogStatus(http.get(path));
+    }
+
+    /**
+     * List recent log anchor submissions. Any of {@code status} ("pending"/"anchored"),
+     * {@code fromIso}, {@code toIso} may be null to omit that filter.
+     */
+    @SuppressWarnings("unchecked")
+    public List<LogAnchorListItem> listLogs(String status, String fromIso, String toIso) {
+        java.util.List<String> parts = new java.util.ArrayList<>();
+        if (status  != null && !status.isEmpty())  parts.add("status=" + status);
+        if (fromIso != null && !fromIso.isEmpty()) parts.add("from=" + fromIso);
+        if (toIso   != null && !toIso.isEmpty())   parts.add("to=" + toIso);
+        String path = "/logs" + (parts.isEmpty() ? "" : "?" + String.join("&", parts));
+        Map<String, Object> data = http.get(path);
+        List<Map<String, Object>> logs = (List<Map<String, Object>>) data.getOrDefault("logs", List.of());
+        return logs.stream().map(ApiClient::parseLogAnchorListItem).collect(java.util.stream.Collectors.toList());
+    }
+
+    /**
+     * Download a portable NIS2 log proof bundle (bundle_type "trustbeat.log.proof").
+     * Returns the raw JSON bundle bytes. Throws {@link NotFoundException} if unknown/not anchored.
+     */
+    public byte[] exportLog(String trackingId) {
+        String path = "/logs/" + URLEncoder.encode(trackingId, StandardCharsets.UTF_8) + "/export";
+        ApiClient.RawResponse raw = http.getRaw(path);
+        if (raw.status == 404) throw new NotFoundException("Log " + trackingId + " not found", "NOT_FOUND");
+        if (raw.status < 200 || raw.status >= 300)
+            throw new TrustBeatException("Log export failed: HTTP " + raw.status, raw.status, null);
+        return raw.body;
+    }
+
+    /** Poll getLogProof() until the log is anchored, then return the proof (660s/15s defaults). */
+    public LogProof anchorLogWait(String trackingId) {
+        return anchorLogWait(trackingId, 660, 15);
+    }
+
+    public LogProof anchorLogWait(String trackingId, int timeoutSecs, int pollSecs) {
+        long deadline = System.currentTimeMillis() + (long) timeoutSecs * 1000;
+        while (true) {
+            LogProof proof = getLogProof(trackingId);
+            if (proof != null) return proof;
+            if (System.currentTimeMillis() > deadline)
+                throw new TrustBeatException("anchorLogWait timed out for " + trackingId, 0, null);
+            try { Thread.sleep((long) pollSecs * 1000); }
+            catch (InterruptedException e) { Thread.currentThread().interrupt(); break; }
+        }
+        throw new TrustBeatException("anchorLogWait interrupted", 0, null);
+    }
+
+    private static String logMetadataJson(LogMetadata m) {
+        LogSource s = m.getLogSource();
+        String src = Json.buildObject("uri", s.getUri(), "name", s.getName(), "size_bytes", s.getSizeBytes());
+        LogSourceIdentity id = m.getSourceIdentity();
+        String ident = Json.buildObject(
+            "system_uuid",       id.getSystemUuid(),
+            "cloud_instance_id", id.getCloudInstanceId(),
+            "hostname",          id.getHostname(),
+            "service_name",      id.getServiceName(),
+            "tenant_id",         id.getTenantId());
+        StringBuilder sb = new StringBuilder("{\"log_source\":").append(src)
+            .append(",\"source_identity\":").append(ident);
+        if (m.getTimeEnvelope() != null) {
+            sb.append(",\"time_envelope\":").append(Json.buildObject(
+                "start_at", m.getTimeEnvelope().getStartAt(),
+                "end_at",   m.getTimeEnvelope().getEndAt()));
+        }
+        return sb.append("}").toString();
     }
 }

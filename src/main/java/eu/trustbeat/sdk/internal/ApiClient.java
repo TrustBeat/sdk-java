@@ -343,4 +343,94 @@ public final class ApiClient {
             Json.str(d, "validated_at")
         );
     }
+
+    // ── Tamper-Evident Logs (NIS2) ──────────────────────────────────────────────
+
+    public static eu.trustbeat.sdk.LogAnchorJob parseLogAnchorJob(Map<String, Object> d) {
+        return new eu.trustbeat.sdk.LogAnchorJob(
+            Json.str(d, "id"),
+            Json.str(d, "log_hash"),
+            Json.str(d, "combined_hash"),
+            Json.str(d, "status"),
+            Json.str(d, "submitted_at"),
+            Json.bool(d, "overage", false),
+            Json.str(d, "label")
+        );
+    }
+
+    public static eu.trustbeat.sdk.LogStatus parseLogStatus(Map<String, Object> d) {
+        return new eu.trustbeat.sdk.LogStatus(
+            Json.str(d, "id"),
+            Json.str(d, "status"),
+            Json.str(d, "submitted_at"),
+            Json.str(d, "anchored_at")
+        );
+    }
+
+    public static eu.trustbeat.sdk.LogAnchorListItem parseLogAnchorListItem(Map<String, Object> d) {
+        return new eu.trustbeat.sdk.LogAnchorListItem(
+            Json.str(d, "id"),
+            Json.str(d, "log_hash"),
+            Json.str(d, "status"),
+            Json.str(d, "submitted_at"),
+            Json.str(d, "log_source_uri"),
+            Json.str(d, "anchored_at"),
+            Json.str(d, "service_name"),
+            Json.str(d, "label")
+        );
+    }
+
+    @SuppressWarnings("unchecked")
+    public static eu.trustbeat.sdk.LogProof parseLogProof(Map<String, Object> d) {
+        eu.trustbeat.sdk.LogMetadata meta = parseLogMetadata((Map<String, Object>) d.get("metadata"));
+
+        AnchorProof proof = null;
+        Object proofObj = d.get("proof");
+        if (proofObj instanceof Map) proof = parseProof((Map<String, Object>) proofObj);
+
+        java.util.List<String> failures = null;
+        Object fr = d.get("failure_reasons");
+        if (fr instanceof java.util.List) {
+            failures = new java.util.ArrayList<>();
+            for (Object o : (java.util.List<?>) fr) failures.add(o == null ? null : o.toString());
+        }
+
+        return new eu.trustbeat.sdk.LogProof(
+            Json.str(d, "id"),
+            Json.str(d, "log_hash"),
+            meta,
+            Json.str(d, "combined_hash"),
+            Json.str(d, "verification_status"),
+            Json.intVal(d, "archive_stamps_count"),
+            Json.str(d, "anchored_at"),
+            proof,
+            failures
+        );
+    }
+
+    @SuppressWarnings("unchecked")
+    private static eu.trustbeat.sdk.LogMetadata parseLogMetadata(Map<String, Object> m) {
+        Map<String, Object> src   = (Map<String, Object>) m.get("log_source");
+        Map<String, Object> ident = (Map<String, Object>) m.getOrDefault("source_identity", java.util.Map.of());
+        Map<String, Object> te    = (Map<String, Object>) m.get("time_envelope");
+
+        eu.trustbeat.sdk.LogSource.Builder sb = new eu.trustbeat.sdk.LogSource.Builder()
+            .uri(Json.str(src, "uri"))
+            .name(Json.str(src, "name"));
+        if (src.get("size_bytes") != null) sb.sizeBytes(Json.intVal(src, "size_bytes"));
+
+        eu.trustbeat.sdk.LogSourceIdentity identity = new eu.trustbeat.sdk.LogSourceIdentity.Builder()
+            .systemUuid(Json.str(ident, "system_uuid"))
+            .cloudInstanceId(Json.str(ident, "cloud_instance_id"))
+            .hostname(Json.str(ident, "hostname"))
+            .serviceName(Json.str(ident, "service_name"))
+            .tenantId(Json.str(ident, "tenant_id"))
+            .build();
+
+        eu.trustbeat.sdk.LogMetadata.Builder mb = new eu.trustbeat.sdk.LogMetadata.Builder()
+            .logSource(sb.build())
+            .sourceIdentity(identity);
+        if (te != null) mb.timeEnvelope(new eu.trustbeat.sdk.LogTimeEnvelope(Json.str(te, "start_at"), Json.str(te, "end_at")));
+        return mb.build();
+    }
 }

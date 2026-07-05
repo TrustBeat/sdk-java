@@ -14,6 +14,7 @@ import java.util.Arrays;
 import java.util.Base64;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -450,5 +451,113 @@ class TrustBeatClientTest {
             () -> client().exportAuditEvents("financial", null, "2026-04-16T00:00:00Z"));
         assertThrows(IllegalArgumentException.class,
             () -> client().exportAuditEvents("financial", "2026-04-15T00:00:00Z", ""));
+    }
+
+    @Test
+    void submitAuditEventsSendsBareArray() {
+        AtomicReference<String> body = new AtomicReference<>();
+        server.createContext("/v1/audit/events/batch", ex -> {
+            try {
+                body.set(new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+                respond(ex, 202, "{\"event_ids\":[\"e1\",\"e2\"]}");
+            } catch (IOException ignored) {}
+            server.removeContext("/v1/audit/events/batch");
+        });
+        List<Map<String, Object>> events = List.of(
+            Map.of("trail_category", "financial", "actor", "svc:pay", "action", "payment.approved", "ts", "2026-04-15T10:00:00Z"),
+            Map.of("trail_category", "financial", "actor", "svc:pay", "action", "payment.settled",  "ts", "2026-04-15T10:00:05Z")
+        );
+        List<String> ids = client().submitAuditEvents(events);
+        assertEquals(List.of("e1", "e2"), ids);
+        assertTrue(body.get().startsWith("["));
+        assertTrue(body.get().contains("payment.approved"));
+    }
+
+    // ── Tamper-Evident Logs (NIS2) ───────────────────────────────────────────
+
+    private static String logProofJson(String status) {
+        String proof = status.equals("VERIFIED") ? proofJson("log-1") : "null";
+        String anchored = status.equals("PENDING") ? "null" : "\"2026-04-15T10:10:00Z\"";
+        return "{\"id\":\"log-1\",\"log_hash\":\"" + "a".repeat(64) + "\",\"combined_hash\":\"" + "c".repeat(64) + "\","
+            + "\"metadata\":{\"log_source\":{\"uri\":\"/var/log/app.log\",\"name\":\"App\",\"size_bytes\":2048},"
+            + "\"source_identity\":{\"hostname\":\"host-1\",\"service_name\":\"payments\"},"
+            + "\"time_envelope\":{\"start_at\":\"2026-04-15T00:00:00Z\",\"end_at\":\"2026-04-15T23:59:59Z\"}},"
+            + "\"verification_status\":\"" + status + "\",\"archive_stamps_count\":0,\"anchored_at\":" + anchored
+            + ",\"proof\":" + proof + "}";
+    }
+
+    @Test
+    void anchorLogSendsBodyAndParses() {
+        AtomicReference<String> body = new AtomicReference<>();
+        server.createContext("/v1/logs/anchor", ex -> {
+            try {
+                body.set(new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+                respond(ex, 202, "{\"id\":\"log-1\",\"log_hash\":\"" + "b".repeat(64) + "\",\"combined_hash\":\"" + "c".repeat(64)
+                    + "\",\"status\":\"pending\",\"submitted_at\":\"2026-04-15T10:00:00Z\",\"overage\":false,\"label\":\"lbl\"}");
+            } catch (IOException ignored) {}
+            server.removeContext("/v1/logs/anchor");
+        });
+        LogMetadata meta = new LogMetadata.Builder()
+            .logSource(new LogSource.Builder().uri("/var/log/app.log").name("App").sizeBytes(2048).build())
+            .sourceIdentity(new LogSourceIdentity.Builder().hostname("host-1").serviceName("payments").build())
+            .timeEnvelope(new LogTimeEnvelope("2026-04-15T00:00:00Z", "2026-04-15T23:59:59Z"))
+            .build();
+        LogAnchorJob job = client().anchorLog("b".repeat(64), meta, "lbl");
+        assertEquals("log-1", job.getId());
+        assertEquals("lbl", job.getLabel());
+        String b = body.get();
+        assertTrue(b.contains("\"log_hash\":\"" + "b".repeat(64) + "\""));
+        assertTrue(b.contains("\"uri\":\"/var/log/app.log\""));
+        assertTrue(b.contains("\"service_name\":\"payments\""));
+        assertTrue(b.contains("\"size_bytes\":2048"));
+        assertTrue(b.contains("\"end_at\":\"2026-04-15T23:59:59Z\""));
+    }
+
+    @Test
+    void getLogProofReturnsProofWhenVerified() {
+        addHandler("/v1/logs/verify/log-1", 200, logProofJson("VERIFIED"));
+        LogProof p = client().getLogProof("log-1");
+        assertNotNull(p);
+        assertEquals("VERIFIED", p.getVerificationStatus());
+        assertEquals("/var/log/app.log", p.getMetadata().getLogSource().getUri());
+        assertNotNull(p.getProof());
+        assertTrue(client().verify(p.getProof()));
+    }
+
+    @Test
+    void getLogProofReturnsNullWhilePending() {
+        addHandler("/v1/logs/verify/log-1", 200, logProofJson("PENDING"));
+        assertNull(client().getLogProof("log-1"));
+    }
+
+    @Test
+    void getLogStatusAndListLogs() {
+        addHandler("/v1/logs/log-1/status", 200,
+            "{\"id\":\"log-1\",\"status\":\"anchored\",\"submitted_at\":\"2026-04-15T10:00:00Z\",\"anchored_at\":\"2026-04-15T10:10:00Z\"}");
+        LogStatus st = client().getLogStatus("log-1");
+        assertEquals("anchored", st.getStatus());
+        assertEquals("2026-04-15T10:10:00Z", st.getAnchoredAt());
+
+        AtomicReference<String> query = new AtomicReference<>();
+        server.createContext("/v1/logs", ex -> {
+            query.set(ex.getRequestURI().getRawQuery());
+            try {
+                respond(ex, 200, "{\"logs\":[{\"id\":\"log-1\",\"log_hash\":\"" + "a".repeat(64)
+                    + "\",\"status\":\"anchored\",\"submitted_at\":\"2026-04-15T10:00:00Z\",\"log_source_uri\":\"/var/log/app.log\","
+                    + "\"service_name\":\"payments\",\"label\":\"x\"}],\"total\":1}");
+            } catch (IOException ignored) {}
+            server.removeContext("/v1/logs");
+        });
+        List<LogAnchorListItem> logs = client().listLogs("anchored", null, null);
+        assertEquals(1, logs.size());
+        assertEquals("/var/log/app.log", logs.get(0).getLogSourceUri());
+        assertTrue(query.get() != null && query.get().contains("status=anchored"));
+    }
+
+    @Test
+    void exportLogReturnsBytes() {
+        addHandler("/v1/logs/log-1/export", 200, "{\"bundle_type\":\"trustbeat.log.proof\",\"id\":\"log-1\"}");
+        byte[] blob = client().exportLog("log-1");
+        assertTrue(new String(blob, StandardCharsets.UTF_8).contains("trustbeat.log.proof"));
     }
 }

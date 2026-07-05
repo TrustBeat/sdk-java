@@ -11,13 +11,13 @@ Part of **[TrustBeat](https://trustbeat.eu)** — digital trust infrastructure f
 <dependency>
     <groupId>eu.trustbeat</groupId>
     <artifactId>trustbeat-sdk</artifactId>
-    <version>0.1.1</version>
+    <version>0.2.0</version>
 </dependency>
 ```
 
 **Gradle:**
 ```gradle
-implementation 'eu.trustbeat:trustbeat-sdk:0.1.1'
+implementation 'eu.trustbeat:trustbeat-sdk:0.2.0'
 ```
 
 ## Quickstart
@@ -43,6 +43,35 @@ boolean valid = tb.verify(proof);
 AnchorJob job = tb.anchor("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
 AnchorProof waited = tb.anchorWait(job.getId());  // polls up to 11 min
 
+```
+
+## Tamper-Evident Logs (NIS2)
+
+Anchor a log hash together with canonical metadata for NIS2 Article 21 audit trails.
+The server seals the metadata into the Merkle leaf, so the proof covers both the log
+content and its context.
+
+```java
+import eu.trustbeat.sdk.*;
+import java.nio.file.Path;
+
+TrustBeat tb = new TrustBeat.Builder().apiKey("tb_live_...").build();
+
+// Hash the log yourself — content never leaves your machine.
+String logHash = TrustBeat.hashFile(Path.of("app.log"));
+
+LogMetadata meta = new LogMetadata.Builder()
+    .logSource(new LogSource.Builder().uri("/var/log/app.log").name("Application log").build())
+    .sourceIdentity(new LogSourceIdentity.Builder().hostname("web-01").serviceName("payments").build())
+    .timeEnvelope(new LogTimeEnvelope("2026-04-15T00:00:00Z", "2026-04-15T23:59:59Z"))
+    .build();
+
+LogAnchorJob job = tb.anchorLog(logHash, meta, "incident-2026-05");
+System.out.println(job.getId() + " " + job.getCombinedHash());
+
+// Wait for the qualified anchor (next batch, up to ~11 min).
+LogProof proof = tb.anchorLogWait(job.getId());
+System.out.println(proof.getVerificationStatus()); // "VERIFIED"
 ```
 
 ## Requirements
