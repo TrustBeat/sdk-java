@@ -560,4 +560,24 @@ class TrustBeatClientTest {
         byte[] blob = client().exportLog("log-1");
         assertTrue(new String(blob, StandardCharsets.UTF_8).contains("trustbeat.log.proof"));
     }
+
+    @Test
+    void exportAiDecisionReturnsBytes() {
+        addHandler("/v1/ai/decisions/dec-1/export", 200, "{\"bundle_type\":\"trustbeat.ai.proof\",\"id\":\"dec-1\"}");
+        byte[] blob = client().exportAiDecision("dec-1");
+        assertTrue(new String(blob, StandardCharsets.UTF_8).contains("trustbeat.ai.proof"));
+    }
+
+    @Test
+    void exportAiDecisionNotFound() {
+        addHandler("/v1/ai/decisions/nope/export", 404, "{\"error\":{\"message\":\"Unknown\",\"code\":\"NOT_FOUND\"}}");
+        assertThrows(NotFoundException.class, () -> client().exportAiDecision("nope"));
+    }
+
+    @Test
+    void exportVerificationReturnsBytes() {
+        addHandler("/v1/verify/ver-1/export", 200, "{\"bundle_type\":\"trustbeat.verification.proof\",\"id\":\"ver-1\"}");
+        byte[] blob = client().exportVerification("ver-1");
+        assertTrue(new String(blob, StandardCharsets.UTF_8).contains("trustbeat.verification.proof"));
+    }
 }

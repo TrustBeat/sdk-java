@@ -453,6 +453,22 @@ public final class TrustBeat {
         }
     }
 
+    /**
+     * Download a portable AI Act proof bundle (bundle_type "trustbeat.ai.proof").
+     * Returns the raw JSON bundle bytes. Throws {@link NotFoundException} if the
+     * ID is unknown or the decision is not yet anchored.
+     *
+     * @param trackingId ID returned by {@link #anchorAiDecision}
+     */
+    public byte[] exportAiDecision(String trackingId) {
+        String path = "/ai/decisions/" + URLEncoder.encode(trackingId, StandardCharsets.UTF_8) + "/export";
+        ApiClient.RawResponse raw = http.getRaw(path);
+        if (raw.status == 404) throw new NotFoundException("AI decision " + trackingId + " not found", "NOT_FOUND");
+        if (raw.status < 200 || raw.status >= 300)
+            throw new TrustBeatException("AI decision export failed: HTTP " + raw.status, raw.status, null);
+        return raw.body;
+    }
+
     // ── Signature & certificate verification ─────────────────────────────────
 
     /**
@@ -500,6 +516,22 @@ public final class TrustBeat {
     }
 
     /**
+     * Download a portable verification proof bundle
+     * (bundle_type "trustbeat.verification.proof"). Returns the raw JSON bundle
+     * bytes. Throws {@link NotFoundException} if the tracking ID is unknown.
+     *
+     * @param trackingId ID returned by {@link #verifySignature} or {@link #verifyAndAnchor}
+     */
+    public byte[] exportVerification(String trackingId) {
+        String path = "/verify/" + URLEncoder.encode(trackingId, StandardCharsets.UTF_8) + "/export";
+        ApiClient.RawResponse raw = http.getRaw(path);
+        if (raw.status == 404) throw new NotFoundException("Verification " + trackingId + " not found", "NOT_FOUND");
+        if (raw.status < 200 || raw.status >= 300)
+            throw new TrustBeatException("Verification export failed: HTTP " + raw.status, raw.status, null);
+        return raw.body;
+    }
+
+    /**
      * Validate a standalone X.509 certificate (DER or PEM) against the EU Trusted List.
      * <p>
      * Checks certificate chain, revocation status (OCSP/CRL), qualified certificate
@@ -512,6 +544,20 @@ public final class TrustBeat {
         String body = "{\"certificate_base64\":\"" + b64 + "\"}";
         Map<String, Object> data = http.post("/validate/certificate", body);
         return ApiClient.parseCertValidationResult(data);
+    }
+
+    // ── Webhooks ──────────────────────────────────────────────────────────────
+
+    /**
+     * Verify the {@code X-TrustBeat-Signature} header of a webhook delivery.
+     * <p>
+     * Pass the <b>raw request body</b> exactly as received. Returns {@code true}
+     * if the signature is valid and the timestamp is within the default
+     * 5-minute tolerance. See {@link WebhookVerifier} for details and the
+     * overload with explicit tolerance.
+     */
+    public static boolean verifyWebhookSignature(byte[] payload, String signatureHeader, String secret) {
+        return WebhookVerifier.verifyWebhookSignature(payload, signatureHeader, secret);
     }
 
     // ── Audit Trail ────────────────────────────────────────────────────────────
