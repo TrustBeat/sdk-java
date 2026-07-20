@@ -151,7 +151,10 @@
           <plugin>
             <groupId>org.sonatype.central</groupId>
             <artifactId>central-publishing-maven-plugin</artifactId>
-            <version>0.7.0</version>
+            <!-- 0.11.0+: 0.7.0 crashed parsing Central's new `warnings` field
+                 while polling for published state (BUILD FAILURE on a successful
+                 publish). See RELEASING.md / merklon publish 2026-07-20. -->
+            <version>0.11.0</version>
             <extensions>true</extensions>
             <configuration>
               <publishingServerId>central</publishingServerId>
