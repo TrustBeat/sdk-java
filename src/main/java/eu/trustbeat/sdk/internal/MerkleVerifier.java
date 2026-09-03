@@ -1,7 +1,9 @@
 package eu.trustbeat.sdk.internal;
 
 import eu.trustbeat.sdk.AnchorProof;
+import eu.trustbeat.sdk.MerkleAlgorithm;
 import eu.trustbeat.sdk.ProofStep;
+import eu.trustbeat.sdk.UnsupportedAlgorithmException;
 import eu.trustbeat.sdk.VerificationException;
 
 import java.security.MessageDigest;
@@ -11,11 +13,14 @@ import java.util.HexFormat;
 /**
  * Local Merkle inclusion proof verifier.
  *
- * Mirrors MerkleEngine.scala exactly:
- *   parent = SHA-256(left_child || right_child)
- *   side="left"  → sibling on the left  → hash(sibling || current)
- *   side="right" → sibling on the right → hash(current || sibling)
- *   Odd layers duplicate the last node.
+ * The fold depends on the construction the proof declares:
+ *   trustbeat-legacy-sha256 — leaf = your hash, parent = SHA-256(left || right)
+ *   rfc6962-sha256          — leaf = SHA-256(0x00 || your hash),
+ *                             parent = SHA-256(0x01 || left || right)
+ *
+ * In both, side gives the sibling's position:
+ *   side="left"  → sibling on the left  → hash over (sibling, current)
+ *   side="right" → sibling on the right → hash over (current, sibling)
  */
 public final class MerkleVerifier {
 
@@ -26,21 +31,42 @@ public final class MerkleVerifier {
      *
      * @return true if the computed root matches proof.getMerkleRoot(), false otherwise
      * @throws VerificationException if the proof data is malformed (bad hex, unknown side)
+     * @throws UnsupportedAlgorithmException if this SDK cannot compute the declared algorithm
      */
     public static boolean verify(AnchorProof proof) {
+        String algorithm = proof.getMerkleAlgorithm() == null || proof.getMerkleAlgorithm().isEmpty()
+            ? MerkleAlgorithm.LEGACY_SHA256
+            : proof.getMerkleAlgorithm();
+
+        final byte[] leafPrefix;
+        final byte[] nodePrefix;
+        if (MerkleAlgorithm.LEGACY_SHA256.equals(algorithm)) {
+            leafPrefix = new byte[0];
+            nodePrefix = new byte[0];
+        } else if (MerkleAlgorithm.RFC6962_SHA256.equals(algorithm)) {
+            leafPrefix = new byte[] { 0x00 };
+            nodePrefix = new byte[] { 0x01 };
+        } else {
+            throw new UnsupportedAlgorithmException(
+                "Unsupported merkle_algorithm \"" + algorithm + "\". This SDK understands \""
+                    + MerkleAlgorithm.LEGACY_SHA256 + "\" and \"" + MerkleAlgorithm.RFC6962_SHA256
+                    + "\". Upgrade the SDK, or verify via the API.");
+        }
+
         byte[] current = decodeHex(proof.getHash(), "Invalid leaf hash");
         byte[] expected = decodeHex(proof.getMerkleRoot(), "Invalid merkle_root");
+        if (leafPrefix.length > 0) current = sha256(concat(leafPrefix, current));
 
         for (ProofStep step : proof.getProofPath()) {
             byte[] sibling = decodeHex(step.getSibling(), "Invalid sibling hex");
             switch (step.getSide()) {
                 case "left":
-                    // sibling is on the left: parent = hash(sibling || current)
-                    current = sha256(concat(sibling, current));
+                    // sibling is on the left
+                    current = sha256(concat(nodePrefix, concat(sibling, current)));
                     break;
                 case "right":
-                    // sibling is on the right: parent = hash(current || sibling)
-                    current = sha256(concat(current, sibling));
+                    // sibling is on the right
+                    current = sha256(concat(nodePrefix, concat(current, sibling)));
                     break;
                 default:
                     throw new VerificationException(

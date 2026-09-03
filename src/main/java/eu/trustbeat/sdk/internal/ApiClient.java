@@ -175,7 +175,9 @@ public final class ApiClient {
             Json.str(d, "provider"),
             Json.str(d, "anchored_at"),
             Json.str(d, "client_ref"),
-            Json.str(d, "description")
+            Json.str(d, "description"),
+            Json.str(d, "merkle_algorithm"),
+            d.get("tree_size") == null ? null : Integer.valueOf(Json.intVal(d, "tree_size"))
         );
     }
 
