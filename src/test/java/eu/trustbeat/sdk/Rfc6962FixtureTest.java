@@ -54,8 +54,12 @@ class Rfc6962FixtureTest {
 
     @Test
     void everyFixtureProofVerifies() throws IOException {
+        // The regex scans the whole file, so this covers the primary 7-entry tree
+        // plus additional_trees at sizes 5 and 6 - the sizes that pin RFC 6962's
+        // largest-power-of-two split against a naive half split. Verification folds
+        // each proof's own sides against its own root, so every tree is self-contained.
         List<AnchorProof> proofs = parse(fixture(), null);
-        assertEquals(7, proofs.size(), "fixture should hold 7 proofs");
+        assertEquals(7 + 5 + 6, proofs.size(), "fixture should hold 7 + 5 + 6 proofs");
         for (int i = 0; i < proofs.size(); i++) {
             assertTrue(MerkleVerifier.verify(proofs.get(i)), "leaf " + i + " failed");
         }
