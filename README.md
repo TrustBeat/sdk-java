@@ -119,3 +119,20 @@ Every proof declares how it must be folded, in `proof.getMerkleAlgorithm()`:
 field existed and is legacy. An algorithm this SDK version does not implement
 throws `UnsupportedAlgorithmException` rather than returning `false` — "cannot
 check" is not "invalid".
+
+### Audit event proofs
+
+`verifyAuditEvent` folds an audit event proof the same way:
+
+```java
+AuditEventProof proof = client.getAuditEventProof(eventId);
+try {
+    System.out.println(client.verifyAuditEvent(proof));
+} catch (IncompleteProofException e) {
+    // The server predates API 1.46 and sent no merkle_root, so there is nothing
+    // to fold against. The proof is not invalid — verify it server-side instead.
+}
+```
+
+Treating that exception as a failed proof would be wrong: it means "cannot
+check", not "tampered".

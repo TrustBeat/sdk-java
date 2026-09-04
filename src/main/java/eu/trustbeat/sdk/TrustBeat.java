@@ -269,6 +269,21 @@ public final class TrustBeat {
         return MerkleVerifier.verify(proof);
     }
 
+    /**
+     * Verify an audit event's Merkle inclusion proof locally — no network call.
+     * The audit counterpart of {@link #verify(AnchorProof)}.
+     *
+     * @return true if the proof is cryptographically valid
+     * @throws IncompleteProofException if the proof has no {@code merkleRoot},
+     *         which is what a server older than API 1.46 returns. That is
+     *         "cannot check", not "invalid" — verify server-side, or re-fetch
+     *         from an upgraded server.
+     * @throws VerificationException if the proof data is malformed
+     */
+    public boolean verifyAuditEvent(AuditEventProof proof) {
+        return MerkleVerifier.verifyAuditEvent(proof);
+    }
+
     // ── File helpers ──────────────────────────────────────────────────────────
 
     /**

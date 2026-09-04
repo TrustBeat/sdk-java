@@ -312,7 +312,10 @@ public final class ApiClient {
             Json.str(d, "batch_id"),
             Json.intVal(d, "leaf_index"),
             path,
-            Json.str(d, "anchored_at")
+            Json.str(d, "anchored_at"),
+            Json.str(d, "merkle_root"),
+            d.get("tree_size") == null ? null : Json.intVal(d, "tree_size"),
+            Json.str(d, "merkle_algorithm")
         );
     }
 

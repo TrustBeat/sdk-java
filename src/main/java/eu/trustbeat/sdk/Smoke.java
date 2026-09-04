@@ -177,9 +177,20 @@ public final class Smoke {
                 List<AuditEvent> events = c.listAuditEvents(env("TB_AUDIT_CATEGORY"), 1, 25);
                 if (events.stream().noneMatch(e -> e.getEventId().equals(id)))
                     fail("verify-audit: " + id + " not returned by listAuditEvents");
+                // Actually fold the path — everything above is structure. A server
+                // before API 1.46 sends no merkle_root, reported as "cannot check".
+                String verdict;
+                try {
+                    if (!c.verifyAuditEvent(proof))
+                        fail("verify-audit: Merkle verification FAILED for " + id);
+                    verdict = "verified algo=" + proof.getMerkleAlgorithm()
+                            + " size=" + proof.getTreeSize();
+                } catch (IncompleteProofException e) {
+                    verdict = "unverifiable (server predates API 1.46)";
+                }
                 System.out.println("OK audit id=" + id + " batch="
                     + proof.getBatchId().substring(0, Math.min(12, proof.getBatchId().length()))
-                    + "… leaf=" + proof.getLeafIndex());
+                    + "… leaf=" + proof.getLeafIndex() + " " + verdict);
                 break;
             }
             case "verify-sig": {

@@ -33,6 +33,37 @@ public final class MerkleVerifier {
      * @throws VerificationException if the proof data is malformed (bad hex, unknown side)
      * @throws UnsupportedAlgorithmException if this SDK cannot compute the declared algorithm
      */
+    /**
+     * Verify an audit event's Merkle inclusion proof locally.
+     *
+     * <p>The audit counterpart of {@link #verify(AnchorProof)}, for the shape that
+     * names the leaf {@code canonicalHash} and the path {@code merklePath}.
+     *
+     * @return true if the computed root matches, false otherwise
+     * @throws IncompleteProofException if the proof carries no {@code merkleRoot} —
+     *         servers before API 1.46 did not send one, so there is nothing to fold
+     *         against. That is "cannot check", never "invalid".
+     * @throws VerificationException if the proof data is malformed
+     * @throws UnsupportedAlgorithmException if this SDK cannot compute the algorithm
+     */
+    public static boolean verifyAuditEvent(eu.trustbeat.sdk.AuditEventProof proof) {
+        if (proof.getMerkleRoot() == null || proof.getMerkleRoot().isEmpty()) {
+            throw new eu.trustbeat.sdk.IncompleteProofException(
+                "This audit event proof has no merkle_root, so it cannot be folded "
+                    + "locally. The server that issued it predates API 1.46. Verify it "
+                    + "server-side via the API, or re-fetch it from an upgraded server.");
+        }
+        java.util.List<eu.trustbeat.sdk.ProofStep> path = new java.util.ArrayList<>();
+        for (eu.trustbeat.sdk.AuditProofStep s : proof.getMerklePath()) {
+            path.add(new eu.trustbeat.sdk.ProofStep(s.getSibling(), s.getSide()));
+        }
+        // Reuse the anchor fold: the shapes differ only in field names.
+        return verify(new AnchorProof(
+            null, proof.getCanonicalHash(), "SHA-256", proof.getBatchId(), proof.getLeafIndex(),
+            proof.getMerkleRoot(), path, new byte[0], "", "", "", proof.getAnchoredAt(),
+            null, null, proof.getMerkleAlgorithm(), proof.getTreeSize()));
+    }
+
     public static boolean verify(AnchorProof proof) {
         String algorithm = proof.getMerkleAlgorithm() == null || proof.getMerkleAlgorithm().isEmpty()
             ? MerkleAlgorithm.LEGACY_SHA256
