@@ -210,9 +210,22 @@ class TrustBeatClientTest {
     }
 
     @Test
-    void anchorBatchOver100ThrowsIllegalArgumentException() {
-        List<String> hashes = Collections.nCopies(101, "a".repeat(64));
+    void anchorBatchOverMaxThrowsIllegalArgumentExceptionWithoutRequest() {
+        // No handler registered — a request would fail with 404, not IllegalArgumentException.
+        List<String> hashes = Collections.nCopies(TrustBeat.MAX_BATCH_SIZE + 1, "a".repeat(64));
         assertThrows(IllegalArgumentException.class, () -> client().anchorBatch(hashes));
+    }
+
+    @Test
+    void anchorBatchSendsTheMaximumInOneRequest() {
+        AtomicReference<String> body = new AtomicReference<>();
+        server.createContext("/v1/anchor/batch", ex -> {
+            body.set(new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            respond(ex, 202, "{\"submission_id\":\"sub_1\",\"accepted\":[],\"total\":1000}");
+            server.removeContext("/v1/anchor/batch");
+        });
+        client().anchorBatch(Collections.nCopies(TrustBeat.MAX_BATCH_SIZE, "a".repeat(64)));
+        assertEquals(TrustBeat.MAX_BATCH_SIZE, body.get().split("\"hash\":").length - 1);
     }
 
     // ── getProof() ────────────────────────────────────────────────────────────
@@ -317,7 +330,9 @@ class TrustBeatClientTest {
     @Test
     void returns429AsRateLimitException() {
         addHandler("/v1/anchor", 429, "{\"error\":{\"message\":\"Slow down\"}}");
-        assertThrows(RateLimitException.class, () -> client().anchor("a".repeat(64)));
+        TrustBeat noRetry = new TrustBeat.Builder().apiKey("tb_live_test")
+            .baseUrl("http://localhost:" + port + "/v1").maxRetries(0).build();
+        assertThrows(RateLimitException.class, () -> noRetry.anchor("a".repeat(64)));
     }
 
     @Test
@@ -579,5 +594,103 @@ class TrustBeatClientTest {
         addHandler("/v1/verify/ver-1/export", 200, "{\"bundle_type\":\"trustbeat.verification.proof\",\"id\":\"ver-1\"}");
         byte[] blob = client().exportVerification("ver-1");
         assertTrue(new String(blob, StandardCharsets.UTF_8).contains("trustbeat.verification.proof"));
+    }
+
+    // ── 429 retry ─────────────────────────────────────────────────────────────
+
+    private static final AtomicInteger scriptCounter = new AtomicInteger();
+
+    /** A scripted server under its own path: the n-th request gets steps[n] (the last repeats). */
+    private final class Scripted {
+        final String base = "/rt-" + scriptCounter.incrementAndGet();
+        final AtomicInteger requests = new AtomicInteger();
+        final List<java.time.Duration> waits = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+        Scripted(String endpoint, String[]... steps) {  // each step: {status, retryAfter-or-null, body}
+            server.createContext(base + "/v1" + endpoint, ex -> {
+                String[] st = steps[Math.min(requests.getAndIncrement(), steps.length - 1)];
+                if (st[1] != null) ex.getResponseHeaders().set("Retry-After", st[1]);
+                respond(ex, Integer.parseInt(st[0]), st[2]);
+            });
+        }
+
+        TrustBeat client(int maxRetries) {
+            return new TrustBeat.Builder().apiKey("tb_live_test")
+                .baseUrl("http://localhost:" + port + base + "/v1")
+                .maxRetries(maxRetries).sleeper(waits::add).build();
+        }
+    }
+
+    private static String[] limited(String retryAfter) {
+        return new String[] {"429", retryAfter, "{\"error\":{\"code\":\"RATE_LIMITED\",\"message\":\"Slow down\"}}"};
+    }
+
+    private static String[] accepted() {
+        return new String[] {"202", null, anchorAcceptedJson("track-1")};
+    }
+
+    @Test
+    void retryWaitsRetryAfterThenSucceeds() {
+        Scripted s = new Scripted("/anchor", limited("3"), accepted());
+        AnchorJob job = s.client(2).anchor("a".repeat(64));
+        assertEquals("track-1", job.getId());
+        assertEquals(2, s.requests.get());
+        assertEquals(List.of(java.time.Duration.ofSeconds(3)), s.waits);
+    }
+
+    @Test
+    void retryGivesUpAfterMaxRetriesWithRetryAfterOnTheException() {
+        Scripted s = new Scripted("/anchor", limited("2"));
+        RateLimitException e = assertThrows(RateLimitException.class, () -> s.client(2).anchor("a".repeat(64)));
+        assertEquals(java.time.Duration.ofSeconds(2), e.getRetryAfter());
+        assertEquals(429, e.getStatus());
+        assertEquals(3, s.requests.get());
+        assertEquals(2, s.waits.size());
+    }
+
+    @Test
+    void retryDisabledWithZero() {
+        Scripted s = new Scripted("/anchor", limited("1"));
+        assertThrows(RateLimitException.class, () -> s.client(0).anchor("a".repeat(64)));
+        assertEquals(1, s.requests.get());
+        assertTrue(s.waits.isEmpty());
+    }
+
+    @Test
+    void retryBacksOffWithoutRetryAfter() {
+        Scripted s = new Scripted("/anchor", limited(null), limited(null), accepted());
+        s.client(2).anchor("a".repeat(64));
+        assertEquals(List.of(java.time.Duration.ofSeconds(1), java.time.Duration.ofSeconds(2)), s.waits);
+    }
+
+    @Test
+    void retryThrowsAWaitOver60SecondsInsteadOfWaiting() {
+        Scripted s = new Scripted("/anchor", limited("120"));
+        RateLimitException e = assertThrows(RateLimitException.class, () -> s.client(2).anchor("a".repeat(64)));
+        assertEquals(java.time.Duration.ofSeconds(120), e.getRetryAfter());
+        assertTrue(s.waits.isEmpty());
+    }
+
+    @Test
+    void retryDoesNotRetryOtherErrors() {
+        // A 5xx may come after the hash was queued; retrying it could anchor it twice.
+        Scripted s = new Scripted("/anchor", new String[] {"503", null, "{\"error\":{\"message\":\"busy\"}}"});
+        assertThrows(TrustBeatException.class, () -> s.client(2).anchor("a".repeat(64)));
+        assertEquals(1, s.requests.get());
+        assertTrue(s.waits.isEmpty());
+    }
+
+    @Test
+    void retryAppliesToBatchSubmissions() {
+        Scripted s = new Scripted("/anchor/batch", limited("1"),
+            new String[] {"202", null, "{\"submission_id\":\"sub_1\",\"accepted\":[],\"total\":0}"});
+        s.client(2).anchorBatch(List.of("a".repeat(64)));
+        assertEquals(2, s.requests.get());
+    }
+
+    @Test
+    void negativeMaxRetriesIsRejected() {
+        assertThrows(IllegalArgumentException.class,
+            () -> new TrustBeat.Builder().apiKey("tb_live_test").maxRetries(-1).build());
     }
 }

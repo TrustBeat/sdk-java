@@ -37,11 +37,15 @@ public final class TrustBeat {
 
     static final String DEFAULT_BASE_URL = "https://api.trustbeat.eu/v1";
 
+    /** Most hashes one {@link #anchorBatch} call may carry — the API's limit. */
+    public static final int MAX_BATCH_SIZE = 1000;
+
     private final ApiClient http;
 
     private TrustBeat(Builder builder) {
         this.http = new ApiClient(builder.apiKey, builder.baseUrl,
-                                  Duration.ofMillis(builder.connectTimeoutMs));
+                                  Duration.ofMillis(builder.connectTimeoutMs),
+                                  builder.maxRetries, builder.sleeper);
     }
 
     // ── Builder ───────────────────────────────────────────────────────────────
@@ -50,6 +54,8 @@ public final class TrustBeat {
         private String  apiKey;
         private String  baseUrl           = DEFAULT_BASE_URL;
         private long    connectTimeoutMs  = 10_000;
+        private int     maxRetries        = 2;
+        private ApiClient.Sleeper sleeper = d -> Thread.sleep(d.toMillis());
 
         public Builder apiKey(String apiKey) {
             this.apiKey = apiKey;
@@ -66,9 +72,28 @@ public final class TrustBeat {
             return this;
         }
 
+        /**
+         * How many times a rate-limited (HTTP 429) request is retried, waiting the
+         * {@code Retry-After} the server sends (1 s, 2 s, 4 s … if it sends none).
+         * {@code 0} disables retrying. Default: 2. Only 429 is retried: the API refuses a
+         * rate-limited submission before queuing it, so a retry cannot anchor a hash twice.
+         */
+        public Builder maxRetries(int maxRetries) {
+            this.maxRetries = maxRetries;
+            return this;
+        }
+
+        /** Test hook: how the client waits between 429 retries. */
+        Builder sleeper(ApiClient.Sleeper sleeper) {
+            this.sleeper = sleeper;
+            return this;
+        }
+
         public TrustBeat build() {
             if (apiKey == null || apiKey.isEmpty())
                 throw new IllegalArgumentException("apiKey must not be empty");
+            if (maxRetries < 0)
+                throw new IllegalArgumentException("maxRetries must not be negative");
             return new TrustBeat(this);
         }
     }
@@ -107,7 +132,9 @@ public final class TrustBeat {
     }
 
     /**
-     * Submit up to 100 SHA-256 hashes in a single batch request.
+     * Submit up to {@value #MAX_BATCH_SIZE} SHA-256 hashes in a single batch request.
+     * The submission is all-or-nothing: if the call fails, none of the hashes was queued.
+     * Servers deployed before 2026-09-26 accept at most 100 and answer a larger batch with 400.
      * Returns a {@link BatchSubmission} grouping all items under a single submissionId.
      * Use {@link #anchorBatchWait(BatchSubmission)} to block until all proofs are ready.
      */
@@ -117,8 +144,8 @@ public final class TrustBeat {
 
     public BatchSubmission anchorBatch(List<String> hashes, AnchorOptions options) {
         if (hashes.isEmpty()) return new BatchSubmission("", new ArrayList<>());
-        if (hashes.size() > 100)
-            throw new IllegalArgumentException("anchorBatch: maximum 100 hashes per request");
+        if (hashes.size() > MAX_BATCH_SIZE)
+            throw new IllegalArgumentException("anchorBatch: maximum " + MAX_BATCH_SIZE + " hashes per request");
 
         StringBuilder items = new StringBuilder("[");
         for (int i = 0; i < hashes.size(); i++) {

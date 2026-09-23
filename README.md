@@ -92,6 +92,29 @@ overload with explicit tolerance.
 Portable proof bundles for offline verification: `exportAiDecision(id)`,
 `exportVerification(id)`, `exportLog(id)` — each returns raw JSON bundle bytes.
 
+## Batches and rate limits
+
+A batch carries up to **1,000** hashes and is all-or-nothing: if the call fails, none of them
+was queued. (API servers deployed before 26 Sep 2026 accept at most 100.)
+
+Anchoring is rate-limited per account (see your plan). A rate-limited request (HTTP 429) is
+**retried automatically**, waiting the `Retry-After` the server sends — twice by default.
+Retrying is always safe: a refused submission was never queued. When the retries run out you
+get the rate-limit error, carrying the wait the server asked for.
+
+```java
+TrustBeat tb = new TrustBeat.Builder()
+    .apiKey("tb_live_...")
+    .maxRetries(2)                                     // 0 turns retrying off
+    .build();
+
+try {
+    BatchSubmission submission = tb.anchorBatch(hashes);   // up to TrustBeat.MAX_BATCH_SIZE (1,000)
+} catch (RateLimitException e) {
+    System.out.println("still limited; server asked to wait " + e.getRetryAfter());
+}
+```
+
 ## Requirements
 
 - Java 11+

@@ -20,16 +20,33 @@ import java.util.stream.Collectors;
  */
 public final class ApiClient {
 
+    /** A 429 asking to wait longer than this is thrown at once rather than waited out. */
+    private static final Duration MAX_RETRY_WAIT = Duration.ofSeconds(60);
+
+    /** How the client waits between 429 retries. Replaced in tests. */
+    @FunctionalInterface
+    public interface Sleeper {
+        void sleep(Duration d) throws InterruptedException;
+    }
+
     private final String     apiKey;
     private final String     baseUrl;
     private final HttpClient http;
+    private final int        maxRetries;
+    private final Sleeper    sleeper;
 
     public ApiClient(String apiKey, String baseUrl, Duration timeout) {
-        this.apiKey  = apiKey;
-        this.baseUrl = baseUrl.replaceAll("/$", "");
-        this.http    = HttpClient.newBuilder()
-                                 .connectTimeout(timeout)
-                                 .build();
+        this(apiKey, baseUrl, timeout, 2, d -> Thread.sleep(d.toMillis()));
+    }
+
+    public ApiClient(String apiKey, String baseUrl, Duration timeout, int maxRetries, Sleeper sleeper) {
+        this.apiKey     = apiKey;
+        this.baseUrl    = baseUrl.replaceAll("/$", "");
+        this.http       = HttpClient.newBuilder()
+                                    .connectTimeout(timeout)
+                                    .build();
+        this.maxRetries = maxRetries;
+        this.sleeper    = sleeper;
     }
 
     // ── Low-level HTTP ─────────────────────────────────────────────────────────
@@ -72,7 +89,38 @@ public final class ApiClient {
         return new RawResponse(resp.statusCode(), ct, resp.body());
     }
 
+    /** One API call, retrying HTTP 429 up to {@code maxRetries} times; any other outcome propagates. */
     private Map<String, Object> send(String method, String path, String body) {
+        for (int attempt = 0; ; attempt++) {
+            try {
+                return sendOnce(method, path, body);
+            } catch (RateLimitException e) {
+                if (attempt >= maxRetries) throw e;
+                Duration wait = e.getRetryAfter() != null ? e.getRetryAfter() : Duration.ofSeconds(1L << attempt);
+                if (wait.compareTo(MAX_RETRY_WAIT) > 0) throw e;
+                try {
+                    sleeper.sleep(wait);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    throw e;
+                }
+            }
+        }
+    }
+
+    /** The {@code Retry-After} header as a duration, or null when absent or not a number of seconds. */
+    static Duration retryAfter(HttpResponse<?> resp) {
+        String value = resp.headers().firstValue("Retry-After").orElse(null);
+        if (value == null) return null;
+        try {
+            double secs = Double.parseDouble(value.trim());
+            return secs < 0 ? Duration.ZERO : Duration.ofMillis(Math.round(secs * 1000));
+        } catch (NumberFormatException e) {
+            return null; // HTTP-date form: TrustBeat does not send it; fall back to backoff
+        }
+    }
+
+    private Map<String, Object> sendOnce(String method, String path, String body) {
         HttpRequest.Builder req = HttpRequest.newBuilder()
             .uri(URI.create(baseUrl + path))
             .header("Authorization", "Bearer " + apiKey)
@@ -110,7 +158,7 @@ public final class ApiClient {
                 case 401: throw new AuthException(msg);
                 case 402: throw new QuotaException(msg);
                 case 404: throw new NotFoundException(msg, code != null ? code : "NOT_FOUND");
-                case 429: throw new RateLimitException(msg);
+                case 429: throw new RateLimitException(msg, retryAfter(resp));
                 default:  throw new TrustBeatException(msg, status, code);
             }
         }
