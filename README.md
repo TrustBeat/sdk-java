@@ -75,6 +75,39 @@ LogProof proof = tb.anchorLogWait(job.getId());
 System.out.println(proof.getVerificationStatus()); // "VERIFIED"
 ```
 
+## Signature Preservation (not yet available)
+
+> **Not yet available** — the API answers `404` until the product is launched.
+
+Preserves the electronic signatures of a signed file (PAdES, XAdES, CAdES, ASiC-E, ASiC-S) for 30
+years. **The signed file never reaches TrustBeat, and this SDK does not read it:** the
+`trustbeat-signature` extractor reads it on your machine and writes a submission JSON (the signatures and the digests that
+bind them to the file), which the SDK sends unchanged.
+
+```bash
+trustbeat-signature extract contract.pdf --out contract.submission.json
+```
+
+```java
+String submission = Files.readString(Path.of("contract.submission.json"));
+
+SignaturePreservationRecord rec = tb.preserveSignatures(submission, "contract-17"); // one anchor against the quota
+rec = tb.getSignaturePreservation(rec.getId());       // status: pending -> anchored -> preserved
+List<SignaturePreservationRecord> recs = tb.listSignaturePreservations(50);
+
+Files.write(Path.of("package.zip"), tb.downloadSignaturePreservationPackage(rec.getId())); // offline verification
+
+// Years later: the file presented now, extracted again
+String now = Files.readString(Path.of("now.submission.json"));
+SignaturePreservationReport report = tb.verifySignaturePreservation(rec.getId(), now);
+System.out.println(report.getResult() + " " + report.getSteps().get(0).getName());
+byte[] pdf = tb.verifySignaturePreservationPdf(rec.getId(), now);
+```
+
+Verifying later works with the original file only: `trustbeat-signature extract` it again and pass that
+submission. A file that does not match is a report with failed steps, not an error. Offline, without
+TrustBeat: `trustbeat-signature verify contract.pdf --package package.zip`.
+
 ## Webhooks
 
 If your account has a webhook secret configured, every delivery is signed with

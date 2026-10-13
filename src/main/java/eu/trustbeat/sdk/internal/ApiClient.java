@@ -89,6 +89,40 @@ public final class ApiClient {
         return new RawResponse(resp.statusCode(), ct, resp.body());
     }
 
+    /** A POST with a JSON body whose success response is binary (a PDF); errors are mapped as in {@link #post}. */
+    public byte[] postBinary(String path, String jsonBody) {
+        HttpRequest req = HttpRequest.newBuilder()
+            .uri(URI.create(baseUrl + path))
+            .header("Authorization", "Bearer " + apiKey)
+            .header("Content-Type", "application/json")
+            .timeout(Duration.ofSeconds(60))
+            .POST(HttpRequest.BodyPublishers.ofString(jsonBody, StandardCharsets.UTF_8))
+            .build();
+        HttpResponse<byte[]> resp;
+        try {
+            resp = http.send(req, HttpResponse.BodyHandlers.ofByteArray());
+        } catch (IOException | InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new TrustBeatException("Request failed: " + e.getMessage());
+        }
+        int status = resp.statusCode();
+        if (status >= 200 && status < 300) return resp.body();
+        Map<String, Object> data;
+        try {
+            data = Json.parseObject(new String(resp.body(), StandardCharsets.UTF_8));
+        } catch (Exception e) {
+            data = Map.of();
+        }
+        String msg = extractErrorMessage(data, status), code = extractErrorCode(data);
+        switch (status) {
+            case 401: throw new AuthException(msg);
+            case 402: throw new QuotaException(msg);
+            case 404: throw new NotFoundException(msg, code != null ? code : "NOT_FOUND");
+            case 429: throw new RateLimitException(msg, retryAfter(resp));
+            default:  throw new TrustBeatException(msg, status, code);
+        }
+    }
+
     /** One API call, retrying HTTP 429 up to {@code maxRetries} times; any other outcome propagates. */
     private Map<String, Object> send(String method, String path, String body) {
         for (int attempt = 0; ; attempt++) {
@@ -187,6 +221,39 @@ public final class ApiClient {
     }
 
     // ── Response parsers ───────────────────────────────────────────────────────
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> obj(Map<String, Object> d, String key) {
+        Object v = d.get(key);
+        return v instanceof Map ? (Map<String, Object>) v : Map.of();
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<String> strings(Map<String, Object> d, String key) {
+        Object v = d.get(key);
+        if (!(v instanceof List)) return List.of();
+        return ((List<Object>) v).stream().map(String::valueOf).collect(Collectors.toList());
+    }
+
+    public static SignaturePreservationRecord parseSignaturePreservationRecord(Map<String, Object> d) {
+        Map<String, Object> c = obj(d, "container"), p = obj(d, "preservation"), e = obj(d, "evidence_record");
+        String erStatus = Json.str(e, "status");
+        return new SignaturePreservationRecord(
+            Json.str(d, "id"), Json.str(d, "status"), Json.str(d, "created_at"), Json.str(d, "client_ref"),
+            Json.str(c, "format"), Json.str(c, "name"), Json.str(c, "sha256"),
+            Json.intVal(d, "signature_count"), Json.str(obj(d, "peo"), "sha256"),
+            Json.str(p, "profile"), Json.str(p, "preserve_until"),
+            erStatus != null ? erStatus : "pending", Json.str(e, "download_url"),
+            d.get("signatures") instanceof List ? Json.array(d, "signatures") : null);
+    }
+
+    public static SignaturePreservationReport parseSignaturePreservationReport(Map<String, Object> d) {
+        List<SignaturePreservationReport.Step> steps = Json.array(d, "steps").stream()
+            .map(s -> new SignaturePreservationReport.Step(Json.intVal(s, "step"), Json.str(s, "name"),
+                Json.str(s, "title"), Json.str(s, "result"), strings(s, "checked_by"), strings(s, "details")))
+            .collect(Collectors.toList());
+        return new SignaturePreservationReport(Json.str(d, "record_id"), Json.str(d, "result"), Json.str(d, "claim"), steps, d);
+    }
 
     public static AnchorJob parseAnchorJob(Map<String, Object> d) {
         return new AnchorJob(

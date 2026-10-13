@@ -588,6 +588,88 @@ public final class TrustBeat {
         return ApiClient.parseCertValidationResult(data);
     }
 
+    // ── Signature Preservation (not yet available: the API answers 404 until launch) ──
+
+    /**
+     * Preserve the signatures of a signed file.
+     * <p>
+     * {@code submission} is the JSON that {@code trustbeat-signature extract <file>} writes. It holds
+     * the signatures and the digests binding them to the file; the signed file itself never reaches
+     * TrustBeat, and this SDK does not read signed files. Counts as one anchor against the monthly
+     * quota. A submission the API does not accept is a {@link TrustBeatException} with status 400 and
+     * code {@code INVALID_SUBMISSION}.
+     *
+     * @param submission the extractor's submission JSON, sent unchanged
+     * @param clientRef  your own reference for the record (at most 256 characters), or {@code null}
+     */
+    public SignaturePreservationRecord preserveSignatures(String submission, String clientRef) {
+        String path = "/signature-preservation"
+            + (clientRef != null ? "?client_ref=" + URLEncoder.encode(clientRef, StandardCharsets.UTF_8) : "");
+        return ApiClient.parseSignaturePreservationRecord(http.post(path, submissionBody(submission)));
+    }
+
+    /** {@link #preserveSignatures(String, String)} without a client reference. */
+    public SignaturePreservationRecord preserveSignatures(String submission) {
+        return preserveSignatures(submission, null);
+    }
+
+    /**
+     * One preserved signed file, with its signatures and their EU DSS findings.
+     *
+     * @throws NotFoundException if the record is unknown on this account
+     */
+    public SignaturePreservationRecord getSignaturePreservation(String recordId) {
+        return ApiClient.parseSignaturePreservationRecord(http.get(spPath(recordId)));
+    }
+
+    /** The account's preserved signed files, newest first (without their signatures); limit 0 = the API's default. */
+    public List<SignaturePreservationRecord> listSignaturePreservations(int limit) {
+        Map<String, Object> data = http.get("/signature-preservation" + (limit > 0 ? "?limit=" + limit : ""));
+        return Json.array(data, "records").stream()
+            .map(ApiClient::parseSignaturePreservationRecord)
+            .collect(java.util.stream.Collectors.toList());
+    }
+
+    /**
+     * The record's package (ZIP) for verification without TrustBeat. Keep it next to the original file;
+     * {@code trustbeat-signature verify <file> --package <zip>} checks both offline.
+     */
+    public byte[] downloadSignaturePreservationPackage(String recordId) {
+        ApiClient.RawResponse raw = http.getRaw(spPath(recordId) + "/package");
+        if (raw.status == 404) throw new NotFoundException("Signature preservation record " + recordId + " not found", "NOT_FOUND");
+        if (raw.status < 200 || raw.status >= 300)
+            throw new TrustBeatException("Package download failed: HTTP " + raw.status, raw.status, null);
+        return raw.body;
+    }
+
+    /**
+     * Verify a signed file presented now against its record: the eight-step report.
+     * {@code submission} is {@code trustbeat-signature extract} of the file presented now. A file that
+     * does not match gives a report with failed steps, not an exception. Not counted against the quota.
+     */
+    public SignaturePreservationReport verifySignaturePreservation(String recordId, String submission) {
+        return ApiClient.parseSignaturePreservationReport(http.post(spPath(recordId) + "/verify", submissionBody(submission)));
+    }
+
+    /** The same report as {@link #verifySignaturePreservation}, as a PDF document. */
+    public byte[] verifySignaturePreservationPdf(String recordId, String submission) {
+        return http.postBinary(spPath(recordId) + "/verify?format=pdf", submissionBody(submission));
+    }
+
+    private static String spPath(String recordId) {
+        return "/signature-preservation/" + URLEncoder.encode(recordId, StandardCharsets.UTF_8);
+    }
+
+    /** The submission unchanged, after checking it is a JSON object. */
+    private static String submissionBody(String submission) {
+        try {
+            Json.parseObject(submission);
+        } catch (RuntimeException e) {
+            throw new IllegalArgumentException("a submission is a JSON object, as written by `trustbeat-signature extract`", e);
+        }
+        return submission;
+    }
+
     // ── Webhooks ──────────────────────────────────────────────────────────────
 
     /**
