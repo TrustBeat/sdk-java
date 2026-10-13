@@ -643,6 +643,20 @@ public final class TrustBeat {
     }
 
     /**
+     * Delete a record before the end of its preservation period. <b>Final</b>: the Preservation Evidence
+     * Object, the signatures and the record are removed and its evidence record is no longer served;
+     * download the package first if you may need it. The account's email address is notified.
+     *
+     * @param confirm the record id again — a guard against deleting the wrong record; a mismatch is a
+     *                {@link TrustBeatException} with status 400 and code {@code CONFIRMATION_REQUIRED}
+     * @throws NotFoundException if the record is unknown on this account or already deleted
+     */
+    public SignaturePreservationDeletion deleteSignaturePreservation(String recordId, String confirm) {
+        Map<String, Object> d = http.delete(spPath(recordId) + "?confirm=" + URLEncoder.encode(confirm, StandardCharsets.UTF_8));
+        return new SignaturePreservationDeletion(Json.str(d, "id"), Json.str(d, "deleted_at"), Json.str(d, "peo_sha256"));
+    }
+
+    /**
      * Verify a signed file presented now against its record: the eight-step report.
      * {@code submission} is {@code trustbeat-signature extract} of the file presented now. A file that
      * does not match gives a report with failed steps, not an exception. Not counted against the quota.

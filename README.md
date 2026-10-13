@@ -102,6 +102,9 @@ String now = Files.readString(Path.of("now.submission.json"));
 SignaturePreservationReport report = tb.verifySignaturePreservation(rec.getId(), now);
 System.out.println(report.getResult() + " " + report.getSteps().get(0).getName());
 byte[] pdf = tb.verifySignaturePreservationPdf(rec.getId(), now);
+
+// Delete a record — final; the id is repeated as a guard, and the account is emailed
+tb.deleteSignaturePreservation(rec.getId(), rec.getId());
 ```
 
 Verifying later works with the original file only: `trustbeat-signature extract` it again and pass that

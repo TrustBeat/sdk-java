@@ -59,6 +59,10 @@ public final class ApiClient {
         return send("GET", path, null);
     }
 
+    public Map<String, Object> delete(String path) {
+        return send("DELETE", path, null);
+    }
+
     /** A raw HTTP response for endpoints that may return binary data. */
     public static final class RawResponse {
         public final int    status;

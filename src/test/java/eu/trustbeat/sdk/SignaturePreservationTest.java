@@ -158,4 +158,25 @@ class SignaturePreservationTest {
         assertEquals(SUBMISSION, c.body());
         assertEquals("%PDF-1.7", new String(pdf, StandardCharsets.UTF_8));
     }
+
+    @Test
+    void deleteSendsTheConfirmationAndMapsTheResult() {
+        answer(200, "application/json", "{\"id\":\"01REC\",\"deleted_at\":\"2026-10-13T11:00:00Z\",\"peo_sha256\":\"dd\"}");
+        SignaturePreservationDeletion d = client().deleteSignaturePreservation("01REC", "01REC");
+        assertEquals("DELETE", calls.get(0).method());
+        assertEquals("/v1/signature-preservation/01REC?confirm=01REC", calls.get(0).uri());
+        assertEquals("01REC", d.getId());
+        assertEquals("2026-10-13T11:00:00Z", d.getDeletedAt());
+        assertEquals("dd", d.getPeoSha256());
+    }
+
+    @Test
+    void deleteWithAWrongConfirmationOrAnUnknownRecord() {
+        answer(400, "application/json", "{\"error\":{\"code\":\"CONFIRMATION_REQUIRED\",\"message\":\"Repeat the id\"}}");
+        TrustBeatException e = assertThrows(TrustBeatException.class, () -> client().deleteSignaturePreservation("01REC", "01OTHER"));
+        assertEquals(400, e.getStatus());
+        assertEquals("CONFIRMATION_REQUIRED", e.getCode());
+        answer(404, "application/json", "{\"error\":{\"code\":\"NOT_FOUND\",\"message\":\"Record not found.\"}}");
+        assertThrows(NotFoundException.class, () -> client().deleteSignaturePreservation("nope", "nope"));
+    }
 }
