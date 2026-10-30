@@ -595,8 +595,9 @@ public final class TrustBeat {
      * <p>
      * {@code submission} is the JSON that {@code trustbeat-signature extract <file>} writes. It holds
      * the signatures and the digests binding them to the file; the signed file itself never reaches
-     * TrustBeat, and this SDK does not read signed files. Counts as one anchor against the monthly
-     * quota. A submission the API does not accept is a {@link TrustBeatException} with status 400 and
+     * TrustBeat, and this SDK does not read signed files. Counts as one preserved file of the account's
+     * Signature Preservation plan; without a plan it is a {@link QuotaException} (402,
+     * {@code SUBSCRIPTION_REQUIRED} in its message). A submission the API does not accept is a {@link TrustBeatException} with status 400 and
      * code {@code INVALID_SUBMISSION}.
      *
      * @param submission the extractor's submission JSON, sent unchanged

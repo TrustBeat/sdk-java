@@ -91,7 +91,7 @@ trustbeat-signature extract contract.pdf --out contract.submission.json
 ```java
 String submission = Files.readString(Path.of("contract.submission.json"));
 
-SignaturePreservationRecord rec = tb.preserveSignatures(submission, "contract-17"); // one anchor against the quota
+SignaturePreservationRecord rec = tb.preserveSignatures(submission, "contract-17"); // one preserved file of your Signature Preservation plan
 rec = tb.getSignaturePreservation(rec.getId());       // status: pending -> anchored -> preserved
 List<SignaturePreservationRecord> recs = tb.listSignaturePreservations(50);
 
@@ -110,6 +110,12 @@ tb.deleteSignaturePreservation(rec.getId(), rec.getId());
 Verifying later works with the original file only: `trustbeat-signature extract` it again and pass that
 submission. A file that does not match is a report with failed steps, not an error. Offline, without
 TrustBeat: `trustbeat-signature verify contract.pdf --package package.zip`.
+
+Preserving needs a Signature Preservation subscription (Starter €19 / month for 100 files, Business €299 /
+month for 2,000; no free trial). Without one the call fails with HTTP 402 — `QuotaException`, whose message
+says `SUBSCRIPTION_REQUIRED` and gives the billing link. Over the monthly allowance the file is still preserved
+and billed per file. It does not use Document Anchoring quota, and reading, downloading, verifying and
+deleting records never need a plan.
 
 ## Webhooks
 
