@@ -588,7 +588,7 @@ public final class TrustBeat {
         return ApiClient.parseCertValidationResult(data);
     }
 
-    // ── Signature Preservation (not yet available: the API answers 404 until launch) ──
+    // ── Signature Preservation ──
 
     /**
      * Preserve the signatures of a signed file.
